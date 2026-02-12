@@ -1,937 +1,818 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { 
-  LayoutDashboard, 
-  KanbanSquare, 
-  List as ListIcon, 
-  Plus, 
-  Calendar, 
-  User, 
-  Clock, 
-  CheckCircle2, 
-  AlertCircle,
-  X,
-  Edit,
-  Download,
-  Upload,
-  Printer,
-  BarChartHorizontal
-} from 'lucide-react';
-
-// --- Mock Data ---
-const initialTasks = [
-  { id: '1', title: 'ออกแบบหน้าจอ UI/UX', description: 'ออกแบบหน้า Dashboard และ Kanban board สำหรับโปรแกรมใหม่', assignee: 'สมชาย', status: 'In Progress', priority: 'High', startDate: '2026-02-01', dueDate: '2026-02-12', progress: 60 },
-  { id: '2', title: 'พัฒนาระบบ Backend', description: 'สร้าง API สำหรับจัดการข้อมูล Tasks และ Users', assignee: 'สมศรี', status: 'To Do', priority: 'Urgent', startDate: '2026-02-05', dueDate: '2026-02-18', progress: 10 },
-  { id: '3', title: 'ทดสอบระบบ (QA)', description: 'ทดสอบการทำงานและหาบั๊กก่อนปล่อยใช้งานจริง', assignee: 'สมศักดิ์', status: 'To Do', priority: 'Medium', startDate: '2026-02-19', dueDate: '2026-02-25', progress: 0 },
-  { id: '4', title: 'ประชุมความคืบหน้ากับลูกค้า', description: 'นำเสนอ Prototype ตัวแรก', assignee: 'สมหมาย', status: 'Done', priority: 'High', startDate: '2026-02-13', dueDate: '2026-02-13', progress: 100 },
-  { id: '5', title: 'เตรียมเอกสาร User Manual', description: 'เขียนคู่มือการใช้งานระบบเบื้องต้น', assignee: 'สมชาย', status: 'Review', priority: 'Low', startDate: '2026-02-20', dueDate: '2026-02-28', progress: 90 },
-];
-
-const STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
-const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
-
-export default function App() {
-  // ดึงข้อมูลจาก LocalStorage ก่อน ถ้าไม่มีให้ใช้ initialTasks
-  const [tasks, setTasks] = useState(() => {
-    const savedTasks = localStorage.getItem('promanage_tasks');
-    if (savedTasks) {
-      try {
-        return JSON.parse(savedTasks);
-      } catch (e) {
-        console.error("Error parsing tasks from local storage");
-      }
-    }
-    return initialTasks;
-  });
-
-  const [currentView, setCurrentView] = useState('gantt'); 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState(null); 
-  const [draggedTaskId, setDraggedTaskId] = useState(null);
-  
-  // --- Print State ---
-  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
-  const [printConfig, setPrintConfig] = useState(null); 
-  const [printOptions, setPrintOptions] = useState({
-    type: 'all', 
-    taskStart: 1,
-    taskEnd: tasks.length || 1,
-    dateStart: new Date().toISOString().split('T')[0],
-    dateEnd: new Date(Date.now() + 86400000*30).toISOString().split('T')[0]
-  });
-  
-  const fileInputRef = useRef(null);
-
-  // --- Auto Save to LocalStorage ---
-  useEffect(() => {
-    localStorage.setItem('promanage_tasks', JSON.stringify(tasks));
-  }, [tasks]);
-
-  // --- Print Trigger Effect ---
-  useEffect(() => {
-    if (printConfig) {
-      const timer = setTimeout(() => {
-        window.print();
-        setPrintConfig(null); 
-      }, 500); 
-      return () => clearTimeout(timer);
-    }
-  }, [printConfig]);
-
-  // --- Derived Visible Tasks (ใช้สำหรับการกรองตอนพิมพ์) ---
-  const visibleTasks = useMemo(() => {
-    if (!printConfig) return tasks;
-
-    if (printConfig.type === 'task') {
-      const start = Math.max(0, parseInt(printConfig.taskStart, 10) - 1);
-      const end = parseInt(printConfig.taskEnd, 10);
-      return tasks.slice(start, end);
-    }
-
-    if (printConfig.type === 'date') {
-      return tasks.filter(t => {
-        if (!t.startDate || !t.dueDate) return false;
-        return t.startDate <= printConfig.dateEnd && t.dueDate >= printConfig.dateStart;
-      });
-    }
-
-    return tasks;
-  }, [tasks, printConfig]);
-
-
-  // --- CSV Export / Import ---
-  const handleExportCSV = () => {
-    const headers = ['id', 'title', 'description', 'assignee', 'status', 'priority', 'startDate', 'dueDate', 'progress'];
-    const csvRows = [];
-    csvRows.push(headers.join(','));
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProManage - Project Management</title>
     
-    tasks.forEach(task => {
-      const values = headers.map(header => {
-        let val = task[header] !== undefined && task[header] !== null ? task[header].toString() : '';
-        val = val.replace(/"/g, '""');
-        return `"${val}"`;
-      });
-      csvRows.push(values.join(','));
-    });
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-    const csvContent = csvRows.join('\n');
-    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' }); 
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `promanage_data_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+    <style>
+        /* Custom Scrollbar for better UI */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
 
-  const handleImportCSV = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = event.target.result;
-        const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
-        if (rows.length <= 1) return; 
-
-        const headers = rows[0].split(',').map(h => h.replace(/"/g, '').trim());
-        const newTasks = [];
-
-        for (let i = 1; i < rows.length; i++) {
-          const values = rows[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || rows[i].split(',');
-          let taskObj = {};
-          headers.forEach((header, index) => {
-            let val = values[index] ? values[index].replace(/^"|"$/g, '').replace(/""/g, '"').trim() : '';
-            if (header === 'progress') val = parseInt(val, 10) || 0;
-            taskObj[header] = val;
-          });
-          if(taskObj.id && taskObj.title) newTasks.push(taskObj);
-        }
-
-        if (newTasks.length > 0) {
-          if(window.confirm(`พบข้อมูลงานทั้งหมด ${newTasks.length} รายการ คุณต้องการแทนที่ข้อมูลเดิมทั้งหมดใช่หรือไม่?`)) {
-            setTasks(newTasks);
-            alert('อิมพอร์ตข้อมูลเรียบร้อยแล้ว');
-          }
-        }
-      } catch (error) {
-        alert('เกิดข้อผิดพลาดในการอ่านไฟล์ CSV โปรดตรวจสอบรูปแบบไฟล์');
-        console.error(error);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = null; 
-  };
-
-  // --- Stats Calculation ---
-  const stats = useMemo(() => {
-    const total = visibleTasks.length;
-    const done = visibleTasks.filter(t => t.status === 'Done').length;
-    const inProgress = visibleTasks.filter(t => t.status === 'In Progress').length;
-    const review = visibleTasks.filter(t => t.status === 'Review').length;
-    const progress = total === 0 ? 0 : Math.round((done / total) * 100);
-    return { total, done, inProgress, review, progress };
-  }, [visibleTasks]);
-
-  // --- Gantt Chart Timeline Calculation ---
-  const ganttData = useMemo(() => {
-    let minDate = new Date();
-    let maxDate = new Date();
-    let hasDates = false;
-
-    if (printConfig && printConfig.type === 'date') {
-      minDate = new Date(printConfig.dateStart);
-      maxDate = new Date(printConfig.dateEnd);
-      hasDates = true;
-    } else {
-      visibleTasks.forEach(t => {
-          if (t.startDate) {
-              const d = new Date(t.startDate);
-              if (!hasDates || d < minDate) minDate = d;
-              hasDates = true;
-          }
-          if (t.dueDate) {
-              const d = new Date(t.dueDate);
-              if (!hasDates || d > maxDate) maxDate = d;
-              hasDates = true;
-          }
-      });
-
-      if (!hasDates) {
-          const now = new Date();
-          minDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          maxDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      } else {
-          minDate = new Date(minDate);
-          minDate.setDate(minDate.getDate() - 2);
-          maxDate = new Date(maxDate);
-          maxDate.setDate(maxDate.getDate() + 7); 
-      }
-    }
-
-    const days = [];
-    let curr = new Date(minDate);
-    while (curr <= maxDate) {
-        days.push(new Date(curr));
-        curr.setDate(curr.getDate() + 1);
-    }
-
-    const months = [];
-    let curMonthStr = null;
-    let count = 0;
-    days.forEach(d => {
-        const mStr = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-        if (mStr !== curMonthStr) {
-            if (curMonthStr) months.push({ label: curMonthStr, colSpan: count });
-            curMonthStr = mStr;
-            count = 1;
-        } else {
-            count++;
-        }
-    });
-    if (curMonthStr) months.push({ label: curMonthStr, colSpan: count });
-
-    return { minDate, maxDate, days, months };
-  }, [visibleTasks, printConfig]);
-
-  // --- Task Modals & Actions ---
-  const openModal = (task = null) => {
-    setEditingTask(task);
-    setIsModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setEditingTask(null);
-  };
-
-  const handleAddTask = (newTask) => {
-    setTasks([...tasks, { ...newTask, id: Date.now().toString() }]);
-    closeModal();
-  };
-
-  const handleUpdateTask = (updatedTask) => {
-    setTasks(tasks.map(t => t.id === updatedTask.id ? updatedTask : t));
-    closeModal();
-  };
-
-  const handleDeleteTask = (taskId) => {
-    if(window.confirm('คุณต้องการลบงานนี้ใช่หรือไม่?')) {
-      setTasks(tasks.filter(t => t.id !== taskId));
-    }
-  };
-
-  const handleStatusChange = (taskId, newStatus) => {
-    setTasks(tasks.map(t => {
-      if (t.id === taskId) {
-        let newProgress = t.progress;
-        if (newStatus === 'Done') newProgress = 100;
-        else if (newStatus === 'To Do' && t.progress === 100) newProgress = 0;
-        return { ...t, status: newStatus, progress: newProgress };
-      }
-      return t;
-    }));
-  };
-
-  const handleSubmitForm = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const taskData = {
-      title: formData.get('title'),
-      description: formData.get('description'),
-      assignee: formData.get('assignee'),
-      priority: formData.get('priority'),
-      startDate: formData.get('startDate'),
-      dueDate: formData.get('dueDate'),
-      progress: parseInt(formData.get('progress'), 10) || 0,
-    };
-
-    if (editingTask) {
-      handleUpdateTask({
-        ...editingTask,
-        ...taskData,
-        status: taskData.progress === 100 ? 'Done' : (taskData.progress === 0 && editingTask.status === 'Done' ? 'To Do' : editingTask.status)
-      });
-    } else {
-      handleAddTask({
-        ...taskData,
-        status: taskData.progress === 100 ? 'Done' : 'To Do',
-      });
-    }
-  };
-
-  // --- Drag & Drop Handlers (Kanban) ---
-  const handleDragStart = (e, id) => {
-    setDraggedTaskId(id);
-    e.dataTransfer.effectAllowed = 'move';
-    e.currentTarget.style.opacity = '0.4';
-  };
-  const handleDragEnd = (e) => {
-    e.currentTarget.style.opacity = '1';
-    setDraggedTaskId(null);
-  };
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-  const handleDrop = (e, status) => {
-    e.preventDefault();
-    if (draggedTaskId) {
-      handleStatusChange(draggedTaskId, status);
-      setDraggedTaskId(null);
-    }
-  };
-
-  // --- Styling Helpers ---
-  const getPriorityColor = (priority) => {
-    switch(priority) {
-      case 'Urgent': return 'bg-red-100 text-red-700 border-red-200';
-      case 'High': return 'bg-orange-100 text-orange-700 border-orange-200';
-      case 'Medium': return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'Low': return 'bg-gray-100 text-gray-700 border-gray-200';
-      default: return 'bg-gray-100 text-gray-700';
-    }
-  };
-  const getStatusColor = (status) => {
-    switch(status) {
-      case 'Done': return 'bg-green-100 text-green-700';
-      case 'In Progress': return 'bg-blue-100 text-blue-700';
-      case 'Review': return 'bg-purple-100 text-purple-700';
-      case 'To Do': return 'bg-gray-100 text-gray-700';
-      default: return 'bg-gray-100 text-gray-700';
-    }
-  };
-
-  return (
-    <>
-      {/* CSS สำหรับการตั้งค่าตอนสั่ง Print หน้าจอ */}
-      <style>{`
+        /* Print Media Queries */
         @media print {
-          aside, header, .print-hide { display: none !important; }
-          main { padding: 0 !important; overflow: visible !important; height: auto !important; }
-          .gantt-container { border: none !important; box-shadow: none !important; }
-          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            aside, header, .print-hide { display: none !important; }
+            main { padding: 0 !important; overflow: visible !important; height: auto !important; }
+            .gantt-container { border: none !important; box-shadow: none !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            body { background-color: white !important; }
+            #app-container { height: auto !important; overflow: visible !important; display: block !important;}
         }
-      `}</style>
 
-      <div className="flex h-screen bg-gray-50 font-sans text-gray-800">
-        
-        {/* Sidebar */}
-        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-          <div className="p-6 border-b border-gray-200">
-            <h1 className="text-xl font-bold text-indigo-600 flex items-center gap-2">
-              <LayoutDashboard size={24} />
-              ProManage
-            </h1>
-          </div>
-          <nav className="flex-1 p-4 space-y-2">
-            <button 
-              onClick={() => setCurrentView('dashboard')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${currentView === 'dashboard' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
-            >
-              <LayoutDashboard size={20} />
-              ภาพรวม (Dashboard)
-            </button>
-            <button 
-              onClick={() => setCurrentView('gantt')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${currentView === 'gantt' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
-            >
-              <BarChartHorizontal size={20} />
-              Gantt Chart
-            </button>
-            <button 
-              onClick={() => setCurrentView('kanban')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${currentView === 'kanban' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
-            >
-              <KanbanSquare size={20} />
-              กระดานงาน (Kanban)
-            </button>
-            <button 
-              onClick={() => setCurrentView('list')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${currentView === 'list' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
-            >
-              <ListIcon size={20} />
-              รายการงาน (List)
-            </button>
-          </nav>
+        /* Tooltip Hover Area */
+        .gantt-bar-group:hover .gantt-tooltip { display: block; }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans text-gray-800 h-screen overflow-hidden">
+
+    <div id="app-container" class="flex h-screen">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+            <div class="p-6 border-b border-gray-200">
+                <h1 class="text-xl font-bold text-indigo-600 flex items-center gap-2">
+                    <i data-lucide="layout-dashboard"></i> ProManage
+                </h1>
+            </div>
+            <nav class="flex-1 p-4 space-y-2" id="nav-menu">
+                <!-- Rendered by JS -->
+            </nav>
         </aside>
 
-        {/* Main Content */}
-        <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Header */}
-          <header className="bg-white border-b border-gray-200 py-4 px-8 flex justify-between items-center">
-            <h2 className="text-2xl font-semibold text-gray-800 capitalize">
-              {currentView === 'dashboard' ? 'Dashboard สรุปภาพรวม' : 
-              currentView === 'kanban' ? 'Kanban Board' : 
-              currentView === 'gantt' ? 'Gantt Chart (ตารางงาน)' : 'รายการงานทั้งหมด'}
-            </h2>
-            <div className="flex items-center gap-3">
-              <input 
-                type="file" 
-                accept=".csv" 
-                ref={fileInputRef} 
-                style={{ display: 'none' }} 
-                onChange={handleImportCSV} 
-              />
-              
-              <button 
-                onClick={() => fileInputRef.current.click()}
-                className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm"
-                title="อิมพอร์ตจาก CSV"
-              >
-                <Upload size={18} />
-                <span className="hidden md:inline">Import</span>
-              </button>
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+            <!-- Header -->
+            <header class="bg-white border-b border-gray-200 py-4 px-8 flex justify-between items-center">
+                <h2 id="header-title" class="text-2xl font-semibold text-gray-800 capitalize">Dashboard</h2>
+                <div class="flex items-center gap-3">
+                    <input type="file" accept=".csv" id="csvFileInput" style="display: none;" onchange="window.handleImportCSV(event)" />
+                    
+                    <button onclick="document.getElementById('csvFileInput').click()" class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm" title="อิมพอร์ตจาก CSV">
+                        <i data-lucide="upload" class="w-4 h-4"></i><span class="hidden md:inline">Import</span>
+                    </button>
 
-              <button 
-                onClick={handleExportCSV}
-                className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm"
-                title="ส่งออกเป็น CSV"
-              >
-                <Download size={18} />
-                <span className="hidden md:inline">Export</span>
-              </button>
+                    <button onclick="window.handleExportCSV()" class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm" title="ส่งออกเป็น CSV">
+                        <i data-lucide="download" class="w-4 h-4"></i><span class="hidden md:inline">Export</span>
+                    </button>
 
-              <button 
-                onClick={() => setIsPrintModalOpen(true)}
-                className="bg-white border border-gray-300 hover:bg-indigo-50 hover:border-indigo-300 text-indigo-600 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm"
-                title="พิมพ์ข้อมูล"
-              >
-                <Printer size={18} />
-                <span className="hidden md:inline">Print</span>
-              </button>
+                    <button onclick="window.openPrintModal()" class="bg-white border border-gray-300 hover:bg-indigo-50 hover:border-indigo-300 text-indigo-600 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm" title="พิมพ์ข้อมูล">
+                        <i data-lucide="printer" class="w-4 h-4"></i><span class="hidden md:inline">Print</span>
+                    </button>
 
-              <div className="w-px h-6 bg-gray-300 mx-1"></div>
+                    <div class="w-px h-6 bg-gray-300 mx-1"></div>
 
-              <button 
-                onClick={() => openModal()}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm md:text-base"
-              >
-                <Plus size={20} />
-                สร้างงานใหม่
-              </button>
+                    <button onclick="window.openTaskModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm md:text-base">
+                        <i data-lucide="plus" class="w-4 h-4"></i> สร้างงานใหม่
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dynamic View Content -->
+            <div id="main-content" class="flex-1 overflow-auto p-4 md:p-8 gantt-container">
+                <!-- Content injected here -->
             </div>
-          </header>
+        </main>
+    </div>
 
-          {/* Dynamic View Content */}
-          <div className="flex-1 overflow-auto p-4 md:p-8 gantt-container">
+    <!-- Add/Edit Task Modal -->
+    <div id="task-modal" class="fixed inset-0 bg-black/50 items-center justify-center z-50 p-4 print-hide hidden flex">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                <h3 id="task-modal-title" class="text-lg font-bold text-gray-800">สร้างงานใหม่</h3>
+                <button onclick="window.closeTaskModal()" class="text-gray-400 hover:text-gray-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="task-form" class="p-6 space-y-4" onsubmit="window.submitTaskForm(event)">
+                <input type="hidden" name="id" id="task-id">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">ชื่องาน *</label>
+                    <input required name="title" id="task-title" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="เช่น ออกแบบโลโก้">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">รายละเอียดงาน</label>
+                    <textarea name="description" id="task-desc" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="ระบุรายละเอียดสิ่งที่ต้องทำ..."></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">ผู้รับผิดชอบ *</label>
+                        <input required name="assignee" id="task-assignee" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="ชื่อทีมงาน">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">ระดับความสำคัญ</label>
+                        <select name="priority" id="task-priority" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="Low">Low (ต่ำ)</option>
+                            <option value="Medium" selected>Medium (ปานกลาง)</option>
+                            <option value="High">High (สูง)</option>
+                            <option value="Urgent">Urgent (ด่วน)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">วันเริ่มงาน (Start) *</label>
+                        <input required name="startDate" id="task-start" type="date" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">วันกำหนดส่ง (Finish) *</label>
+                        <input required name="dueDate" id="task-due" type="date" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">ความคืบหน้า (Progress %) *</label>
+                    <input required name="progress" id="task-progress" type="number" min="0" max="100" value="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0-100">
+                    <p class="text-xs text-gray-500 mt-1">ใส่ค่า 0 - 100 (หากใส่ 100 งานจะถูกปรับสถานะเป็น Done อัตโนมัติ)</p>
+                </div>
+                <div class="pt-4 mt-6 border-t border-gray-100 flex justify-end gap-3">
+                    <button type="button" onclick="window.closeTaskModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium">ยกเลิก</button>
+                    <button type="submit" id="task-submit-btn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium">สร้างงาน</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Print Config Modal -->
+    <div id="print-modal" class="fixed inset-0 bg-black/50 items-center justify-center z-50 p-4 print-hide hidden flex">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <i data-lucide="printer" class="w-5 h-5 text-indigo-600"></i> การตั้งค่าพิมพ์ (Print Setup)
+                </h3>
+                <button onclick="window.closePrintModal()" class="text-gray-400 hover:text-gray-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-5">
+                <div class="space-y-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="printType" value="all" checked onchange="window.updatePrintOptions('type', 'all')" class="text-indigo-600 focus:ring-indigo-500" />
+                        <span class="text-gray-700 font-medium">พิมพ์ทั้งหมด (Print All)</span>
+                    </label>
+                    
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="printType" value="task" onchange="window.updatePrintOptions('type', 'task')" class="text-indigo-600 focus:ring-indigo-500" />
+                        <span class="text-gray-700 font-medium">พิมพ์ตามลำดับงาน (Task ID Rank)</span>
+                    </label>
+                    <div id="print-task-inputs" class="flex items-center gap-3 pl-6 mt-2 hidden">
+                        <input type="number" id="print-task-start" min="1" class="w-16 border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" onchange="window.updatePrintOptions('taskStart', this.value)"/>
+                        <span class="text-gray-500 text-sm">ถึง</span>
+                        <input type="number" id="print-task-end" min="1" class="w-16 border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" onchange="window.updatePrintOptions('taskEnd', this.value)"/>
+                    </div>
+
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="printType" value="date" onchange="window.updatePrintOptions('type', 'date')" class="text-indigo-600 focus:ring-indigo-500" />
+                        <span class="text-gray-700 font-medium">พิมพ์ตามช่วงเวลา (Date Range)</span>
+                    </label>
+                    <div id="print-date-inputs" class="flex flex-col gap-2 pl-6 mt-2 hidden">
+                        <input type="date" id="print-date-start" class="border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" onchange="window.updatePrintOptions('dateStart', this.value)"/>
+                        <span class="text-gray-500 text-sm text-center">ถึง</span>
+                        <input type="date" id="print-date-end" class="border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" onchange="window.updatePrintOptions('dateEnd', this.value)"/>
+                    </div>
+                </div>
+
+                <div class="bg-blue-50 text-blue-800 text-xs p-3 rounded-lg flex gap-2">
+                    <i data-lucide="alert-circle" class="w-4 h-4 flex-shrink-0 mt-0.5"></i>
+                    <p><b>แนะนำ:</b> เพื่อความสวยงามในมุมมอง Gantt Chart แนะนำให้ตั้งค่าหน้ากระดาษเป็น <b>แนวนอน (Landscape)</b> ในหน้าต่าง Print</p>
+                </div>
+
+                <div class="pt-2 border-t border-gray-100 flex justify-end gap-3">
+                    <button onclick="window.closePrintModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium">ยกเลิก</button>
+                    <button onclick="window.confirmPrint()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium flex items-center gap-2">
+                        <i data-lucide="printer" class="w-4 h-4"></i> ยืนยันการพิมพ์
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Logic -->
+    <script>
+        // --- Constants & Data ---
+        const STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
+        const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
+        
+        const initialTasks = [
+            { id: '1', title: 'ออกแบบหน้าจอ UI/UX', description: 'ออกแบบหน้า Dashboard และ Kanban board สำหรับโปรแกรมใหม่', assignee: 'สมชาย', status: 'In Progress', priority: 'High', startDate: '2026-02-01', dueDate: '2026-02-12', progress: 60 },
+            { id: '2', title: 'พัฒนาระบบ Backend', description: 'สร้าง API สำหรับจัดการข้อมูล Tasks และ Users', assignee: 'สมศรี', status: 'To Do', priority: 'Urgent', startDate: '2026-02-05', dueDate: '2026-02-18', progress: 10 },
+            { id: '3', title: 'ทดสอบระบบ (QA)', description: 'ทดสอบการทำงานและหาบั๊กก่อนปล่อยใช้งานจริง', assignee: 'สมศักดิ์', status: 'To Do', priority: 'Medium', startDate: '2026-02-19', dueDate: '2026-02-25', progress: 0 },
+            { id: '4', title: 'ประชุมความคืบหน้ากับลูกค้า', description: 'นำเสนอ Prototype ตัวแรก', assignee: 'สมหมาย', status: 'Done', priority: 'High', startDate: '2026-02-13', dueDate: '2026-02-13', progress: 100 },
+            { id: '5', title: 'เตรียมเอกสาร User Manual', description: 'เขียนคู่มือการใช้งานระบบเบื้องต้น', assignee: 'สมชาย', status: 'Review', priority: 'Low', startDate: '2026-02-20', dueDate: '2026-02-28', progress: 90 },
+        ];
+
+        // --- State ---
+        let tasks = [];
+        let currentView = 'gantt'; // 'dashboard', 'gantt', 'kanban', 'list'
+        let draggedTaskId = null;
+        let printConfig = null;
+        let printOptions = {
+            type: 'all', 
+            taskStart: 1,
+            taskEnd: 5,
+            dateStart: new Date().toISOString().split('T')[0],
+            dateEnd: new Date(Date.now() + 86400000*30).toISOString().split('T')[0]
+        };
+
+        // --- Initialization ---
+        function init() {
+            const saved = localStorage.getItem('promanage_tasks');
+            if (saved) {
+                try { tasks = JSON.parse(saved); } catch(e) { tasks = initialTasks; }
+            } else {
+                tasks = initialTasks;
+            }
+            printOptions.taskEnd = tasks.length || 1;
+            renderAll();
+        }
+
+        // --- Rendering Core ---
+        function renderAll() {
+            renderSidebar();
+            renderHeader();
+            renderContent();
+            lucide.createIcons(); // Re-initialize icons
+        }
+
+        function saveAndRender() {
+            localStorage.setItem('promanage_tasks', JSON.stringify(tasks));
+            printOptions.taskEnd = tasks.length || 1;
+            renderAll();
+        }
+
+        window.changeView = function(view) {
+            currentView = view;
+            renderAll();
+        }
+
+        // --- View Renderers ---
+        function renderSidebar() {
+            const nav = document.getElementById('nav-menu');
+            const menuItems = [
+                { id: 'dashboard', icon: 'layout-dashboard', label: 'ภาพรวม (Dashboard)' },
+                { id: 'gantt', icon: 'bar-chart-horizontal', label: 'Gantt Chart' },
+                { id: 'kanban', icon: 'kanban-square', label: 'กระดานงาน (Kanban)' },
+                { id: 'list', icon: 'list', label: 'รายการงาน (List)' }
+            ];
+
+            nav.innerHTML = menuItems.map(item => `
+                <button onclick="window.changeView('${item.id}')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${currentView === item.id ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}">
+                    <i data-lucide="${item.icon}" class="w-5 h-5"></i>
+                    ${item.label}
+                </button>
+            `).join('');
+        }
+
+        function renderHeader() {
+            const titles = { 'dashboard': 'Dashboard สรุปภาพรวม', 'gantt': 'Gantt Chart (ตารางงาน)', 'kanban': 'Kanban Board', 'list': 'รายการงานทั้งหมด' };
+            document.getElementById('header-title').innerText = titles[currentView] || '';
+        }
+
+        function renderContent() {
+            const container = document.getElementById('main-content');
+            let visibleTasks = getVisibleTasks();
+
+            if (currentView === 'dashboard') container.innerHTML = getDashboardHTML(visibleTasks);
+            else if (currentView === 'gantt') container.innerHTML = getGanttHTML(visibleTasks);
+            else if (currentView === 'kanban') container.innerHTML = getKanbanHTML(visibleTasks);
+            else if (currentView === 'list') container.innerHTML = getListHTML(visibleTasks);
+        }
+
+        // --- Derived Data ---
+        function getVisibleTasks() {
+            if (!printConfig) return tasks;
+            if (printConfig.type === 'task') {
+                const start = Math.max(0, parseInt(printConfig.taskStart, 10) - 1);
+                const end = parseInt(printConfig.taskEnd, 10);
+                return tasks.slice(start, end);
+            }
+            if (printConfig.type === 'date') {
+                return tasks.filter(t => t.startDate && t.dueDate && t.startDate <= printConfig.dateEnd && t.dueDate >= printConfig.dateStart);
+            }
+            return tasks;
+        }
+
+        function getStats(tList) {
+            const total = tList.length;
+            const done = tList.filter(t => t.status === 'Done').length;
+            const inProgress = tList.filter(t => t.status === 'In Progress').length;
+            const review = tList.filter(t => t.status === 'Review').length;
+            const progress = total === 0 ? 0 : Math.round((done / total) * 100);
+            return { total, done, inProgress, review, progress };
+        }
+
+        function getGanttData(tList) {
+            let minDate = new Date();
+            let maxDate = new Date();
+            let hasDates = false;
+
+            if (printConfig && printConfig.type === 'date') {
+                minDate = new Date(printConfig.dateStart);
+                maxDate = new Date(printConfig.dateEnd);
+                hasDates = true;
+            } else {
+                tList.forEach(t => {
+                    if (t.startDate) {
+                        const d = new Date(t.startDate);
+                        if (!hasDates || d < minDate) minDate = d;
+                        hasDates = true;
+                    }
+                    if (t.dueDate) {
+                        const d = new Date(t.dueDate);
+                        if (!hasDates || d > maxDate) maxDate = d;
+                        hasDates = true;
+                    }
+                });
+
+                if (!hasDates) {
+                    const now = new Date();
+                    minDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                    maxDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                } else {
+                    minDate = new Date(minDate); minDate.setDate(minDate.getDate() - 2);
+                    maxDate = new Date(maxDate); maxDate.setDate(maxDate.getDate() + 7);
+                }
+            }
+
+            const days = [];
+            let curr = new Date(minDate);
+            while (curr <= maxDate) { days.push(new Date(curr)); curr.setDate(curr.getDate() + 1); }
+
+            const months = [];
+            let curMonthStr = null;
+            let count = 0;
+            days.forEach(d => {
+                const mStr = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+                if (mStr !== curMonthStr) {
+                    if (curMonthStr) months.push({ label: curMonthStr, colSpan: count });
+                    curMonthStr = mStr; count = 1;
+                } else { count++; }
+            });
+            if (curMonthStr) months.push({ label: curMonthStr, colSpan: count });
+
+            return { minDate, maxDate, days, months };
+        }
+
+        // --- HTML Generators ---
+        function getDashboardHTML(vTasks) {
+            const stats = getStats(vTasks);
+            const urgentTasks = vTasks.filter(t => t.priority === 'Urgent' && t.status !== 'Done');
             
-            {/* --- GANTT VIEW (MS PROJECT STYLE) --- */}
-            {currentView === 'gantt' && (
-              <div className="flex flex-col h-full bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden gantt-container">
-                {/* Ribbon / Toolbar */}
-                <div className="print-hide bg-gray-100 border-b border-gray-300 px-4 py-2 flex items-center gap-4 text-sm font-medium text-gray-700">
-                  <button onClick={() => openModal()} className="flex items-center gap-1 hover:text-indigo-600"><Plus size={16}/> New Task</button>
-                  <div className="w-px h-4 bg-gray-300"></div>
-                  <span className="text-gray-500 flex items-center gap-2">
-                    <Calendar size={14}/> 
-                    Timeline: {ganttData.months[0]?.label} {ganttData.months.length > 1 ? ` - ${ganttData.months[ganttData.months.length-1].label}` : ''}
-                  </span>
+            return `
+            <div class="space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-indigo-100 text-indigo-600 rounded-lg"><i data-lucide="list"></i></div>
+                        <div><p class="text-sm text-gray-500 font-medium">งานทั้งหมด</p><p class="text-2xl font-bold">${stats.total}</p></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-blue-100 text-blue-600 rounded-lg"><i data-lucide="clock"></i></div>
+                        <div><p class="text-sm text-gray-500 font-medium">กำลังดำเนินการ</p><p class="text-2xl font-bold">${stats.inProgress}</p></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-purple-100 text-purple-600 rounded-lg"><i data-lucide="alert-circle"></i></div>
+                        <div><p class="text-sm text-gray-500 font-medium">รอการตรวจ</p><p class="text-2xl font-bold">${stats.review}</p></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-green-100 text-green-600 rounded-lg"><i data-lucide="check-circle"></i></div>
+                        <div><p class="text-sm text-gray-500 font-medium">เสร็จสิ้นแล้ว</p><p class="text-2xl font-bold">${stats.done}</p></div>
+                    </div>
                 </div>
 
-                <div className="flex flex-1 overflow-hidden">
-                  {/* Left Pane: Data Table */}
-                  <div className="w-[40%] min-w-[350px] border-r border-gray-300 flex flex-col overflow-x-auto bg-white">
-                    <div className="flex bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 sticky top-0 z-10 shadow-sm h-12 items-center">
-                      <div className="w-10 px-2 border-r border-gray-300 text-center">ID</div>
-                      <div className="flex-1 px-2 border-r border-gray-300 min-w-[150px]">Task Name</div>
-                      <div className="w-20 px-2 border-r border-gray-300 text-center">Start</div>
-                      <div className="w-20 px-2 border-r border-gray-300 text-center">Finish</div>
-                      <div className="w-16 px-2 text-center">%</div>
-                    </div>
-                    <div className="flex-1 overflow-y-auto">
-                      {visibleTasks.map((task, index) => (
-                        <div 
-                          key={task.id} 
-                          onClick={() => openModal(task)}
-                          className="flex border-b border-gray-200 text-sm hover:bg-indigo-50 cursor-pointer h-8 items-center group transition-colors"
-                        >
-                          <div className="w-10 px-2 text-center text-gray-500 border-r border-gray-200">
-                            {printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}
-                          </div>
-                          <div className="flex-1 px-2 font-medium text-gray-800 border-r border-gray-200 truncate group-hover:text-indigo-600 flex justify-between items-center">
-                            {task.title}
-                            <Edit size={12} className="print-hide opacity-0 group-hover:opacity-100 text-indigo-500" />
-                          </div>
-                          <div className="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs">{task.startDate?.substring(5) || '-'}</div>
-                          <div className="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs">{task.dueDate?.substring(5) || '-'}</div>
-                          <div className="w-16 px-2 text-center text-gray-600 text-xs font-medium">{task.progress || 0}%</div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="col-span-1 lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <h3 class="text-lg font-bold mb-4">ความคืบหน้าโครงการ</h3>
+                        <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
+                            <div class="bg-indigo-600 h-4 rounded-full transition-all duration-500" style="width: ${stats.progress}%"></div>
                         </div>
-                      ))}
-                      {/* Empty Rows Fill */}
-                      {Array.from({length: 10}).map((_, i) => (
-                        <div key={`empty-${i}`} className="flex border-b border-gray-100 h-8">
-                          <div className="w-10 border-r border-gray-100"></div>
-                          <div className="flex-1 border-r border-gray-100"></div>
-                          <div className="w-20 border-r border-gray-100"></div>
-                          <div className="w-20 border-r border-gray-100"></div>
-                          <div className="w-16"></div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Right Pane: Gantt Chart */}
-                  <div className="flex-1 flex flex-col overflow-auto bg-white relative">
-                    <div className="bg-gray-100 border-b border-gray-300 sticky top-0 z-10 shadow-sm h-12 flex flex-col">
-                      <div className="flex border-b border-gray-300 bg-gray-200/50 min-w-max flex-1">
-                        {ganttData.months.map((m, i) => (
-                           <div key={i} className="flex items-center justify-center text-xs font-bold text-gray-700 border-r border-gray-300 flex-shrink-0" style={{ width: `${m.colSpan * 32}px` }}>
-                             {m.label}
-                           </div>
-                        ))}
-                      </div>
-                      <div className="flex min-w-max flex-1">
-                        {ganttData.days.map((day, i) => (
-                          <div key={i} className={`w-8 flex-shrink-0 flex items-center justify-center text-[10px] text-gray-500 border-r border-gray-200 ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-200/50 text-red-400 font-medium' : ''}`}>
-                            {day.getDate()}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex-1 min-w-max relative">
-                      <div className="absolute inset-0 flex pointer-events-none min-w-max">
-                        {ganttData.days.map((day, i) => (
-                          <div key={`grid-${i}`} className={`w-8 flex-shrink-0 border-r border-gray-100 h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/80' : ''}`}></div>
-                        ))}
-                      </div>
-                      
-                      {visibleTasks.map(task => {
-                        if (!task.startDate || !task.dueDate) return <div key={`empty-bar-${task.id}`} className="h-8 border-b border-gray-200"></div>;
-                        
-                        const sDate = new Date(task.startDate);
-                        const eDate = new Date(task.dueDate);
-                        
-                        const startOffsetDays = Math.floor((sDate - ganttData.minDate) / (1000 * 60 * 60 * 24));
-                        const durationDays = Math.floor((eDate - sDate) / (1000 * 60 * 60 * 24)) + 1;
-                        
-                        const leftPos = startOffsetDays * 32; 
-                        const barWidth = Math.max(durationDays * 32, 32); 
-                        
-                        if(leftPos + barWidth < 0) return <div key={`empty-bar-${task.id}`} className="h-8 border-b border-gray-200"></div>;
-
-                        return (
-                          <div key={`bar-${task.id}`} className="h-8 border-b border-gray-200 relative flex items-center">
-                            <div 
-                              onClick={() => openModal(task)}
-                              className="absolute h-5 bg-blue-200 border border-blue-400 rounded-sm shadow-sm overflow-hidden flex items-center group cursor-pointer hover:border-blue-600 transition-colors"
-                              style={{ left: `${Math.max(0, leftPos)}px`, width: `${leftPos < 0 ? barWidth + leftPos : barWidth}px` }}
-                            >
-                              <div className="h-full bg-blue-500 opacity-80 transition-all" style={{ width: `${task.progress || 0}%` }}></div>
-                              <div className="print-hide hidden group-hover:block absolute z-20 left-1/2 -translate-x-1/2 top-6 bg-gray-800 text-white text-xs p-1.5 rounded whitespace-nowrap shadow-lg">
-                                <span className="font-semibold">{task.title}</span><br/>
-                                Progress: {task.progress || 0}%
-                              </div>
-                            </div>
-                            <div 
-                              className="absolute text-[10px] text-gray-600 whitespace-nowrap"
-                              style={{ left: `${Math.max(barWidth, leftPos + barWidth) + 8}px` }}
-                            >
-                              {task.assignee}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* --- DASHBOARD VIEW --- */}
-            {currentView === 'dashboard' && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
-                    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-lg"><ListIcon size={24}/></div>
-                    <div>
-                      <p className="text-sm text-gray-500 font-medium">งานทั้งหมด</p>
-                      <p className="text-2xl font-bold">{stats.total}</p>
-                    </div>
-                  </div>
-                  <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
-                    <div className="p-3 bg-blue-100 text-blue-600 rounded-lg"><Clock size={24}/></div>
-                    <div>
-                      <p className="text-sm text-gray-500 font-medium">กำลังดำเนินการ</p>
-                      <p className="text-2xl font-bold">{stats.inProgress}</p>
-                    </div>
-                  </div>
-                  <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
-                    <div className="p-3 bg-purple-100 text-purple-600 rounded-lg"><AlertCircle size={24}/></div>
-                    <div>
-                      <p className="text-sm text-gray-500 font-medium">รอการตรวจ</p>
-                      <p className="text-2xl font-bold">{stats.review}</p>
-                    </div>
-                  </div>
-                  <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
-                    <div className="p-3 bg-green-100 text-green-600 rounded-lg"><CheckCircle2 size={24}/></div>
-                    <div>
-                      <p className="text-sm text-gray-500 font-medium">เสร็จสิ้นแล้ว</p>
-                      <p className="text-2xl font-bold">{stats.done}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="col-span-1 lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                    <h3 className="text-lg font-bold mb-4">ความคืบหน้าโครงการ</h3>
-                    <div className="w-full bg-gray-200 rounded-full h-4 mb-2">
-                      <div className="bg-indigo-600 h-4 rounded-full transition-all duration-500" style={{ width: `${stats.progress}%` }}></div>
-                    </div>
-                    <p className="text-right text-sm text-gray-600 font-medium">{stats.progress}% เสร็จสมบูรณ์</p>
-                  </div>
-                  
-                  <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                    <h3 className="text-lg font-bold mb-4">งานด่วน (Urgent Tasks)</h3>
-                    <div className="space-y-3">
-                      {visibleTasks.filter(t => t.priority === 'Urgent' && t.status !== 'Done').length === 0 ? (
-                        <p className="text-sm text-gray-500 text-center py-4">ไม่มีงานด่วนในขณะนี้ 🎉</p>
-                      ) : (
-                        visibleTasks.filter(t => t.priority === 'Urgent' && t.status !== 'Done').map(task => (
-                          <div key={task.id} className="p-3 border border-red-200 bg-red-50 rounded-lg flex justify-between items-center">
-                            <div>
-                              <p className="font-semibold text-sm text-gray-800">{task.title}</p>
-                              <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                                <Clock size={12}/> Due: {task.dueDate}
-                              </p>
-                            </div>
-                            <button onClick={() => openModal(task)} className="print-hide text-gray-400 hover:text-indigo-600 p-1">
-                              <Edit size={14}/>
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* --- KANBAN VIEW --- */}
-            {currentView === 'kanban' && (
-              <div className="flex h-full gap-6 overflow-x-auto pb-4">
-                {STATUSES.map(status => (
-                  <div 
-                    key={status} 
-                    className="flex-shrink-0 w-80 bg-gray-100 rounded-xl flex flex-col"
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, status)}
-                  >
-                    <div className="p-4 flex justify-between items-center border-b border-gray-200">
-                      <h3 className="font-semibold text-gray-700 flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded-full ${status === 'Done' ? 'bg-green-500' : status === 'In Progress' ? 'bg-blue-500' : status === 'Review' ? 'bg-purple-500' : 'bg-gray-400'}`}></div>
-                        {status}
-                      </h3>
-                      <span className="bg-gray-200 text-gray-600 text-xs px-2 py-1 rounded-full font-medium">
-                        {visibleTasks.filter(t => t.status === status).length}
-                      </span>
+                        <p class="text-right text-sm text-gray-600 font-medium">${stats.progress}% เสร็จสมบูรณ์</p>
                     </div>
                     
-                    <div className="flex-1 p-3 overflow-y-auto space-y-3">
-                      {visibleTasks.filter(t => t.status === status).map(task => (
-                        <div 
-                          key={task.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, task.id)}
-                          onDragEnd={handleDragEnd}
-                          className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 cursor-grab active:cursor-grabbing hover:border-indigo-300 transition-colors group relative"
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <span className={`text-xs px-2 py-1 rounded-md border font-medium ${getPriorityColor(task.priority)}`}>
-                              {task.priority}
-                            </span>
-                            <div className="flex gap-1">
-                              <button onClick={() => openModal(task)} className="print-hide text-gray-400 hover:text-indigo-600 transition-colors opacity-0 group-hover:opacity-100">
-                                <Edit size={16} />
-                              </button>
-                            </div>
-                          </div>
-                          <h4 className="font-semibold text-gray-800 mb-1">{task.title}</h4>
-                          <p className="text-sm text-gray-500 mb-3 line-clamp-2">{task.description}</p>
-                          
-                          <div className="mb-3">
-                             <div className="flex justify-between text-xs mb-1 text-gray-500">
-                               <span>Progress</span>
-                               <span className="font-medium text-gray-700">{task.progress || 0}%</span>
-                             </div>
-                             <div className="w-full bg-gray-100 rounded-full h-1.5">
-                               <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${task.progress || 0}%` }}></div>
-                             </div>
-                          </div>
-
-                          <div className="flex justify-between items-center mt-auto border-t border-gray-100 pt-3">
-                            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                              <User size={14} className="text-gray-400"/>
-                              {task.assignee}
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                              <Calendar size={14} className="text-gray-400"/>
-                              {task.dueDate}
-                            </div>
-                          </div>
+                    <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <h3 class="text-lg font-bold mb-4">งานด่วน (Urgent Tasks)</h3>
+                        <div class="space-y-3">
+                            ${urgentTasks.length === 0 ? `<p class="text-sm text-gray-500 text-center py-4">ไม่มีงานด่วนในขณะนี้ 🎉</p>` : 
+                            urgentTasks.map(task => `
+                                <div class="p-3 border border-red-200 bg-red-50 rounded-lg flex justify-between items-center">
+                                    <div>
+                                        <p class="font-semibold text-sm text-gray-800">${task.title}</p>
+                                        <p class="text-xs text-gray-500 mt-1 flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i> Due: ${task.dueDate}</p>
+                                    </div>
+                                    <button onclick="window.openTaskModal('${task.id}')" class="print-hide text-gray-400 hover:text-indigo-600 p-1"><i data-lucide="edit" class="w-4 h-4"></i></button>
+                                </div>
+                            `).join('')}
                         </div>
-                      ))}
-                      <div className="print-hide h-full min-h-[50px] rounded-lg border-2 border-dashed border-transparent"></div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                </div>
+            </div>`;
+        }
 
-            {/* --- LIST VIEW --- */}
-            {currentView === 'list' && (
-              <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-gray-50 text-gray-500 text-sm border-b border-gray-200">
-                      <th className="p-4 font-medium w-12 text-center">ID</th>
-                      <th className="p-4 font-medium">ชื่องาน (Task Name)</th>
-                      <th className="p-4 font-medium">ความคืบหน้า</th>
-                      <th className="p-4 font-medium">สถานะ (Status)</th>
-                      <th className="p-4 font-medium">ผู้รับผิดชอบ</th>
-                      <th className="print-hide p-4 font-medium text-right">จัดการ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200 text-sm">
-                    {visibleTasks.length === 0 ? (
-                      <tr><td colSpan="6" className="text-center p-8 text-gray-500">ไม่มีข้อมูลงาน</td></tr>
-                    ) : visibleTasks.map((task, index) => (
-                      <tr key={task.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="p-4 text-center text-gray-500">{printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}</td>
-                        <td className="p-4">
-                          <p className="font-medium text-gray-800">{task.title}</p>
-                          <p className="text-xs text-gray-500 truncate max-w-xs">{task.description}</p>
-                        </td>
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <div className="w-16 bg-gray-200 rounded-full h-1.5">
-                              <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${task.progress || 0}%` }}></div>
-                            </div>
-                            <span className="text-xs text-gray-600 font-medium">{task.progress || 0}%</span>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <span className={`text-xs px-2.5 py-1.5 rounded-full font-medium ${getStatusColor(task.status)}`}>
-                            {task.status}
-                          </span>
-                        </td>
-                        <td className="p-4 flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs mt-2">
-                            {task.assignee.charAt(0)}
-                          </div>
-                          <span className="mt-2">{task.assignee}</span>
-                        </td>
-                        <td className="print-hide p-4 text-right space-x-3">
-                          <button onClick={() => openModal(task)} className="text-indigo-600 hover:text-indigo-800 transition-colors font-medium">
-                            แก้ไข
-                          </button>
-                          <button onClick={() => handleDeleteTask(task.id)} className="text-red-500 hover:text-red-700 transition-colors font-medium">
-                            ลบ
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
+        function getListHTML(vTasks) {
+            return `
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-50 text-gray-500 text-sm border-b border-gray-200">
+                            <th class="p-4 font-medium w-12 text-center">ID</th>
+                            <th class="p-4 font-medium">ชื่องาน (Task Name)</th>
+                            <th class="p-4 font-medium">ความคืบหน้า</th>
+                            <th class="p-4 font-medium">สถานะ (Status)</th>
+                            <th class="p-4 font-medium">ผู้รับผิดชอบ</th>
+                            <th class="print-hide p-4 font-medium text-right">จัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 text-sm">
+                        ${vTasks.length === 0 ? `<tr><td colspan="6" class="text-center p-8 text-gray-500">ไม่มีข้อมูลงาน</td></tr>` : 
+                        vTasks.map((task, index) => `
+                            <tr class="hover:bg-gray-50 transition-colors">
+                                <td class="p-4 text-center text-gray-500">${printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}</td>
+                                <td class="p-4">
+                                    <p class="font-medium text-gray-800">${task.title}</p>
+                                    <p class="text-xs text-gray-500 truncate max-w-xs">${task.description || ''}</p>
+                                </td>
+                                <td class="p-4">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-16 bg-gray-200 rounded-full h-1.5"><div class="bg-blue-500 h-1.5 rounded-full" style="width: ${task.progress || 0}%"></div></div>
+                                        <span class="text-xs text-gray-600 font-medium">${task.progress || 0}%</span>
+                                    </div>
+                                </td>
+                                <td class="p-4">
+                                    <span class="text-xs px-2.5 py-1.5 rounded-full font-medium ${getStatusColor(task.status)}">${task.status}</span>
+                                </td>
+                                <td class="p-4 flex items-center gap-2">
+                                    <div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs">${task.assignee.charAt(0)}</div>
+                                    <span>${task.assignee}</span>
+                                </td>
+                                <td class="print-hide p-4 text-right space-x-3">
+                                    <button onclick="window.openTaskModal('${task.id}')" class="text-indigo-600 hover:text-indigo-800 font-medium">แก้ไข</button>
+                                    <button onclick="window.deleteTask('${task.id}')" class="text-red-500 hover:text-red-700 font-medium">ลบ</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
                 </table>
-              </div>
-            )}
+            </div>`;
+        }
 
-          </div>
-        </main>
-
-        {/* --- PRINT CONFIG MODAL --- */}
-        {isPrintModalOpen && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 print-hide">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                  <Printer size={20} className="text-indigo-600"/> การตั้งค่าพิมพ์ (Print Setup)
-                </h3>
-                <button onClick={() => setIsPrintModalOpen(false)} className="text-gray-400 hover:text-gray-600">
-                  <X size={20} />
-                </button>
-              </div>
-              
-              <div className="p-6 space-y-5">
-                <div className="space-y-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="printType" value="all" 
-                      checked={printOptions.type === 'all'} 
-                      onChange={() => setPrintOptions({...printOptions, type: 'all'})}
-                      className="text-indigo-600 focus:ring-indigo-500" 
-                    />
-                    <span className="text-gray-700 font-medium">พิมพ์ทั้งหมด (Print All)</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="printType" value="task" 
-                      checked={printOptions.type === 'task'} 
-                      onChange={() => setPrintOptions({...printOptions, type: 'task'})}
-                      className="text-indigo-600 focus:ring-indigo-500" 
-                    />
-                    <span className="text-gray-700 font-medium">พิมพ์ตามลำดับงาน (Task ID Rank)</span>
-                  </label>
-                  {printOptions.type === 'task' && (
-                    <div className="flex items-center gap-3 pl-6 mt-2">
-                      <input type="number" min="1" max={tasks.length} value={printOptions.taskStart} onChange={(e) => setPrintOptions({...printOptions, taskStart: e.target.value})} className="w-16 border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" />
-                      <span className="text-gray-500 text-sm">ถึง</span>
-                      <input type="number" min="1" max={tasks.length} value={printOptions.taskEnd} onChange={(e) => setPrintOptions({...printOptions, taskEnd: e.target.value})} className="w-16 border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" />
-                    </div>
-                  )}
-
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="printType" value="date" 
-                      checked={printOptions.type === 'date'} 
-                      onChange={() => setPrintOptions({...printOptions, type: 'date'})}
-                      className="text-indigo-600 focus:ring-indigo-500" 
-                    />
-                    <span className="text-gray-700 font-medium">พิมพ์ตามช่วงเวลา (Date Range)</span>
-                  </label>
-                  {printOptions.type === 'date' && (
-                    <div className="flex flex-col gap-2 pl-6 mt-2">
-                      <input type="date" value={printOptions.dateStart} onChange={(e) => setPrintOptions({...printOptions, dateStart: e.target.value})} className="border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" />
-                      <span className="text-gray-500 text-sm text-center">ถึง</span>
-                      <input type="date" value={printOptions.dateEnd} onChange={(e) => setPrintOptions({...printOptions, dateEnd: e.target.value})} className="border rounded px-2 py-1 text-sm outline-none focus:border-indigo-500" />
-                    </div>
-                  )}
-                </div>
-
-                <div className="bg-blue-50 text-blue-800 text-xs p-3 rounded-lg flex gap-2">
-                  <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
-                  <p><b>แนะนำ:</b> เพื่อความสวยงามในมุมมอง Gantt Chart แนะนำให้ตั้งค่าหน้ากระดาษเป็น <b>แนวนอน (Landscape)</b> ในหน้าต่าง Print ของเบราว์เซอร์</p>
-                </div>
-
-                <div className="pt-2 border-t border-gray-100 flex justify-end gap-3">
-                  <button onClick={() => setIsPrintModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium">
-                    ยกเลิก
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setPrintConfig(printOptions);
-                      setIsPrintModalOpen(false);
-                    }} 
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
-                  >
-                    <Printer size={16} /> ยืนยันการพิมพ์
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- ADD / EDIT TASK MODAL --- */}
-        {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 print-hide">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                <h3 className="text-lg font-bold text-gray-800">
-                  {editingTask ? 'แก้ไขรายละเอียดงาน' : 'สร้างงานใหม่'}
-                </h3>
-                <button onClick={closeModal} className="text-gray-400 hover:text-gray-600">
-                  <X size={20} />
-                </button>
-              </div>
-              
-              <form key={editingTask ? editingTask.id : 'new-task'} className="p-6 space-y-4" onSubmit={handleSubmitForm}>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ชื่องาน *</label>
-                  <input required name="title" type="text" defaultValue={editingTask?.title || ''} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="เช่น ออกแบบโลโก้" />
-                </div>
+        function getKanbanHTML(vTasks) {
+            let html = `<div class="flex h-full gap-6 overflow-x-auto pb-4">`;
+            STATUSES.forEach(status => {
+                const sTasks = vTasks.filter(t => t.status === status);
+                const dotColor = status === 'Done' ? 'bg-green-500' : status === 'In Progress' ? 'bg-blue-500' : status === 'Review' ? 'bg-purple-500' : 'bg-gray-400';
                 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">รายละเอียดงาน</label>
-                  <textarea name="description" rows="3" defaultValue={editingTask?.description || ''} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="ระบุรายละเอียดสิ่งที่ต้องทำ..."></textarea>
-                </div>
+                html += `
+                <div class="flex-shrink-0 w-80 bg-gray-100 rounded-xl flex flex-col" ondragover="window.handleDragOver(event)" ondrop="window.handleDrop(event, '${status}')">
+                    <div class="p-4 flex justify-between items-center border-b border-gray-200">
+                        <h3 class="font-semibold text-gray-700 flex items-center gap-2"><div class="w-3 h-3 rounded-full ${dotColor}"></div>${status}</h3>
+                        <span class="bg-gray-200 text-gray-600 text-xs px-2 py-1 rounded-full font-medium">${sTasks.length}</span>
+                    </div>
+                    <div class="flex-1 p-3 overflow-y-auto space-y-3">
+                        ${sTasks.map(task => `
+                            <div draggable="true" ondragstart="window.handleDragStart(event, '${task.id}')" ondragend="window.handleDragEnd(event)" class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 cursor-grab active:cursor-grabbing hover:border-indigo-300 transition-colors group relative">
+                                <div class="flex justify-between items-start mb-2">
+                                    <span class="text-xs px-2 py-1 rounded-md border font-medium ${getPriorityColor(task.priority)}">${task.priority}</span>
+                                    <button onclick="window.openTaskModal('${task.id}')" class="print-hide text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100"><i data-lucide="edit" class="w-4 h-4"></i></button>
+                                </div>
+                                <h4 class="font-semibold text-gray-800 mb-1">${task.title}</h4>
+                                <p class="text-sm text-gray-500 mb-3 line-clamp-2">${task.description || ''}</p>
+                                <div class="mb-3">
+                                    <div class="flex justify-between text-xs mb-1 text-gray-500"><span>Progress</span><span class="font-medium text-gray-700">${task.progress || 0}%</span></div>
+                                    <div class="w-full bg-gray-100 rounded-full h-1.5"><div class="bg-blue-500 h-1.5 rounded-full" style="width: ${task.progress || 0}%"></div></div>
+                                </div>
+                                <div class="flex justify-between items-center mt-auto border-t border-gray-100 pt-3">
+                                    <div class="flex items-center gap-1.5 text-xs text-gray-500"><i data-lucide="user" class="w-3.5 h-3.5 text-gray-400"></i>${task.assignee}</div>
+                                    <div class="flex items-center gap-1.5 text-xs text-gray-500"><i data-lucide="calendar" class="w-3.5 h-3.5 text-gray-400"></i>${task.dueDate || '-'}</div>
+                                </div>
+                            </div>
+                        `).join('')}
+                        <div class="print-hide h-full min-h-[50px] rounded-lg border-2 border-dashed border-transparent"></div>
+                    </div>
+                </div>`;
+            });
+            html += `</div>`;
+            return html;
+        }
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">ผู้รับผิดชอบ *</label>
-                    <input required name="assignee" type="text" defaultValue={editingTask?.assignee || ''} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="ชื่อทีมงาน" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">ระดับความสำคัญ</label>
-                    <select name="priority" defaultValue={editingTask?.priority || 'Medium'} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500">
-                      <option value="Low">Low (ต่ำ)</option>
-                      <option value="Medium">Medium (ปานกลาง)</option>
-                      <option value="High">High (สูง)</option>
-                      <option value="Urgent">Urgent (ด่วน)</option>
-                    </select>
-                  </div>
-                </div>
+        function getGanttHTML(vTasks) {
+            const gData = getGanttData(vTasks);
+            const timelineLabel = gData.months.length > 0 ? `${gData.months[0].label} ${gData.months.length > 1 ? '- ' + gData.months[gData.months.length-1].label : ''}` : '';
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">วันเริ่มงาน (Start) *</label>
-                    <input required name="startDate" type="date" defaultValue={editingTask?.startDate || new Date().toISOString().split('T')[0]} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">วันกำหนดส่ง (Finish) *</label>
-                    <input required name="dueDate" type="date" defaultValue={editingTask?.dueDate || new Date(Date.now() + 86400000*3).toISOString().split('T')[0]} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" />
-                  </div>
+            let html = `
+            <div class="flex flex-col h-full bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden gantt-container">
+                <div class="print-hide bg-gray-100 border-b border-gray-300 px-4 py-2 flex items-center gap-4 text-sm font-medium text-gray-700">
+                    <button onclick="window.openTaskModal()" class="flex items-center gap-1 hover:text-indigo-600"><i data-lucide="plus" class="w-4 h-4"></i> New Task</button>
+                    <div class="w-px h-4 bg-gray-300"></div>
+                    <span class="text-gray-500 flex items-center gap-2"><i data-lucide="calendar" class="w-4 h-4"></i> Timeline: ${timelineLabel}</span>
                 </div>
+                <div class="flex flex-1 overflow-hidden">
+                    
+                    <!-- Left Pane -->
+                    <div class="w-[40%] min-w-[350px] border-r border-gray-300 flex flex-col overflow-x-auto bg-white">
+                        <div class="flex bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 sticky top-0 z-10 shadow-sm h-12 items-center">
+                            <div class="w-10 px-2 border-r border-gray-300 text-center">ID</div>
+                            <div class="flex-1 px-2 border-r border-gray-300 min-w-[150px]">Task Name</div>
+                            <div class="w-20 px-2 border-r border-gray-300 text-center">Start</div>
+                            <div class="w-20 px-2 border-r border-gray-300 text-center">Finish</div>
+                            <div class="w-16 px-2 text-center">%</div>
+                        </div>
+                        <div class="flex-1 overflow-y-auto">
+                            ${vTasks.map((task, index) => `
+                                <div onclick="window.openTaskModal('${task.id}')" class="flex border-b border-gray-200 text-sm hover:bg-indigo-50 cursor-pointer h-8 items-center group transition-colors">
+                                    <div class="w-10 px-2 text-center text-gray-500 border-r border-gray-200">${printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}</div>
+                                    <div class="flex-1 px-2 font-medium text-gray-800 border-r border-gray-200 truncate flex justify-between items-center">
+                                        ${task.title}
+                                        <i data-lucide="edit" class="w-3 h-3 print-hide opacity-0 group-hover:opacity-100 text-indigo-500"></i>
+                                    </div>
+                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs">${task.startDate ? task.startDate.substring(5) : '-'}</div>
+                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs">${task.dueDate ? task.dueDate.substring(5) : '-'}</div>
+                                    <div class="w-16 px-2 text-center text-gray-600 text-xs font-medium">${task.progress || 0}%</div>
+                                </div>
+                            `).join('')}
+                            ${Array.from({length: Math.max(0, 10 - vTasks.length)}).map(() => `
+                                <div class="flex border-b border-gray-100 h-8">
+                                    <div class="w-10 border-r border-gray-100"></div><div class="flex-1 border-r border-gray-100"></div><div class="w-20 border-r border-gray-100"></div><div class="w-20 border-r border-gray-100"></div><div class="w-16"></div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ความคืบหน้า (Progress %) *</label>
-                  <input required name="progress" type="number" min="0" max="100" defaultValue={editingTask?.progress || 0} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0-100" />
-                  <p className="text-xs text-gray-500 mt-1">ใส่ค่า 0 - 100 (หากใส่ 100 งานจะถูกปรับสถานะเป็น Done อัตโนมัติ)</p>
+                    <!-- Right Pane: Gantt -->
+                    <div class="flex-1 flex flex-col overflow-auto bg-white relative">
+                        <div class="bg-gray-100 border-b border-gray-300 sticky top-0 z-10 shadow-sm h-12 flex flex-col">
+                            <div class="flex border-b border-gray-300 bg-gray-200/50 min-w-max flex-1">
+                                ${gData.months.map(m => `<div class="flex items-center justify-center text-xs font-bold text-gray-700 border-r border-gray-300 flex-shrink-0" style="width: ${m.colSpan * 32}px">${m.label}</div>`).join('')}
+                            </div>
+                            <div class="flex min-w-max flex-1">
+                                ${gData.days.map(day => `<div class="w-8 flex-shrink-0 flex items-center justify-center text-[10px] text-gray-500 border-r border-gray-200 ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-200/50 text-red-400 font-medium' : ''}">${day.getDate()}</div>`).join('')}
+                            </div>
+                        </div>
+                        <div class="flex-1 min-w-max relative">
+                            <div class="absolute inset-0 flex pointer-events-none min-w-max">
+                                ${gData.days.map(day => `<div class="w-8 flex-shrink-0 border-r border-gray-100 h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/80' : ''}"></div>`).join('')}
+                            </div>
+                            ${vTasks.map(task => {
+                                if (!task.startDate || !task.dueDate) return `<div class="h-8 border-b border-gray-200"></div>`;
+                                const sDate = new Date(task.startDate);
+                                const eDate = new Date(task.dueDate);
+                                const startOffsetDays = Math.floor((sDate - gData.minDate) / (1000 * 60 * 60 * 24));
+                                const durationDays = Math.floor((eDate - sDate) / (1000 * 60 * 60 * 24)) + 1;
+                                const leftPos = startOffsetDays * 32; 
+                                const barWidth = Math.max(durationDays * 32, 32); 
+                                if(leftPos + barWidth < 0) return `<div class="h-8 border-b border-gray-200"></div>`;
+                                
+                                const finalLeft = Math.max(0, leftPos);
+                                const finalWidth = leftPos < 0 ? barWidth + leftPos : barWidth;
+                                const labelLeft = Math.max(barWidth, leftPos + barWidth) + 8;
+
+                                return `
+                                <div class="h-8 border-b border-gray-200 relative flex items-center gantt-bar-group">
+                                    <div onclick="window.openTaskModal('${task.id}')" class="absolute h-5 bg-blue-200 border border-blue-400 rounded-sm shadow-sm overflow-hidden flex items-center cursor-pointer hover:border-blue-600 transition-colors" style="left: ${finalLeft}px; width: ${finalWidth}px">
+                                        <div class="h-full bg-blue-500 opacity-80 transition-all" style="width: ${task.progress || 0}%"></div>
+                                        <div class="gantt-tooltip print-hide hidden absolute z-20 left-1/2 -translate-x-1/2 top-6 bg-gray-800 text-white text-xs p-1.5 rounded whitespace-nowrap shadow-lg">
+                                            <span class="font-semibold">${task.title}</span><br/>Progress: ${task.progress || 0}%
+                                        </div>
+                                    </div>
+                                    <div class="absolute text-[10px] text-gray-600 whitespace-nowrap" style="left: ${labelLeft}px">${task.assignee}</div>
+                                </div>`;
+                            }).join('')}
+                        </div>
+                    </div>
                 </div>
+            </div>`;
+            return html;
+        }
 
-                <div className="pt-4 mt-6 border-t border-gray-100 flex justify-end gap-3">
-                  <button type="button" onClick={closeModal} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium">
-                    ยกเลิก
-                  </button>
-                  <button type="submit" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium">
-                    {editingTask ? 'บันทึกการแก้ไข' : 'สร้างงาน'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        // --- Styles Helpers ---
+        function getPriorityColor(priority) {
+            switch(priority) {
+                case 'Urgent': return 'bg-red-100 text-red-700 border-red-200';
+                case 'High': return 'bg-orange-100 text-orange-700 border-orange-200';
+                case 'Medium': return 'bg-blue-100 text-blue-700 border-blue-200';
+                case 'Low': return 'bg-gray-100 text-gray-700 border-gray-200';
+                default: return 'bg-gray-100 text-gray-700';
+            }
+        }
+        function getStatusColor(status) {
+            switch(status) {
+                case 'Done': return 'bg-green-100 text-green-700';
+                case 'In Progress': return 'bg-blue-100 text-blue-700';
+                case 'Review': return 'bg-purple-100 text-purple-700';
+                case 'To Do': return 'bg-gray-100 text-gray-700';
+                default: return 'bg-gray-100 text-gray-700';
+            }
+        }
 
-      </div>
-    </>
-  );
-}
+        // --- Form / Modals ---
+        window.openTaskModal = function(taskId = null) {
+            const modal = document.getElementById('task-modal');
+            const titleEl = document.getElementById('task-modal-title');
+            const btnEl = document.getElementById('task-submit-btn');
+            const form = document.getElementById('task-form');
+
+            form.reset();
+            if (taskId) {
+                const task = tasks.find(t => t.id === taskId);
+                if(task) {
+                    document.getElementById('task-id').value = task.id;
+                    document.getElementById('task-title').value = task.title;
+                    document.getElementById('task-desc').value = task.description || '';
+                    document.getElementById('task-assignee').value = task.assignee;
+                    document.getElementById('task-priority').value = task.priority || 'Medium';
+                    document.getElementById('task-start').value = task.startDate || '';
+                    document.getElementById('task-due').value = task.dueDate || '';
+                    document.getElementById('task-progress').value = task.progress || 0;
+                    titleEl.innerText = 'แก้ไขรายละเอียดงาน';
+                    btnEl.innerText = 'บันทึกการแก้ไข';
+                }
+            } else {
+                document.getElementById('task-id').value = '';
+                const today = new Date().toISOString().split('T')[0];
+                const threeDaysLater = new Date(Date.now() + 86400000*3).toISOString().split('T')[0];
+                document.getElementById('task-start').value = today;
+                document.getElementById('task-due').value = threeDaysLater;
+                titleEl.innerText = 'สร้างงานใหม่';
+                btnEl.innerText = 'สร้างงาน';
+            }
+            modal.classList.remove('hidden');
+        }
+
+        window.closeTaskModal = function() {
+            document.getElementById('task-modal').classList.add('hidden');
+        }
+
+        window.submitTaskForm = function(event) {
+            event.preventDefault();
+            const formData = new FormData(event.target);
+            const id = formData.get('id');
+            const progress = parseInt(formData.get('progress'), 10) || 0;
+            
+            const taskData = {
+                title: formData.get('title'),
+                description: formData.get('description'),
+                assignee: formData.get('assignee'),
+                priority: formData.get('priority'),
+                startDate: formData.get('startDate'),
+                dueDate: formData.get('dueDate'),
+                progress: progress
+            };
+
+            if (id) { // Update
+                const existingIndex = tasks.findIndex(t => t.id === id);
+                if(existingIndex > -1) {
+                    const existingTask = tasks[existingIndex];
+                    let newStatus = existingTask.status;
+                    if(progress === 100) newStatus = 'Done';
+                    else if(progress === 0 && newStatus === 'Done') newStatus = 'To Do';
+                    
+                    tasks[existingIndex] = { ...existingTask, ...taskData, status: newStatus };
+                }
+            } else { // Create
+                taskData.id = Date.now().toString();
+                taskData.status = progress === 100 ? 'Done' : 'To Do';
+                tasks.push(taskData);
+            }
+            saveAndRender();
+            window.closeTaskModal();
+        }
+
+        window.deleteTask = function(taskId) {
+            if(confirm('คุณต้องการลบงานนี้ใช่หรือไม่?')) {
+                tasks = tasks.filter(t => t.id !== taskId);
+                saveAndRender();
+            }
+        }
+
+        // --- Drag & Drop ---
+        window.handleDragStart = function(event, id) {
+            draggedTaskId = id;
+            event.dataTransfer.effectAllowed = 'move';
+            setTimeout(() => { event.target.style.opacity = '0.4'; }, 0);
+        }
+        window.handleDragEnd = function(event) {
+            event.target.style.opacity = '1';
+            draggedTaskId = null;
+        }
+        window.handleDragOver = function(event) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+        }
+        window.handleDrop = function(event, newStatus) {
+            event.preventDefault();
+            if (draggedTaskId) {
+                const taskIndex = tasks.findIndex(t => t.id === draggedTaskId);
+                if(taskIndex > -1) {
+                    let newProgress = tasks[taskIndex].progress;
+                    if (newStatus === 'Done') newProgress = 100;
+                    else if (newStatus === 'To Do' && newProgress === 100) newProgress = 0;
+                    
+                    tasks[taskIndex].status = newStatus;
+                    tasks[taskIndex].progress = newProgress;
+                    saveAndRender();
+                }
+                draggedTaskId = null;
+            }
+        }
+
+        // --- Print Logic ---
+        window.openPrintModal = function() {
+            document.getElementById('print-modal').classList.remove('hidden');
+            document.getElementById('print-task-end').value = tasks.length || 1;
+        }
+        window.closePrintModal = function() {
+            document.getElementById('print-modal').classList.add('hidden');
+        }
+        window.updatePrintOptions = function(key, value) {
+            printOptions[key] = value;
+            document.getElementById('print-task-inputs').classList.toggle('hidden', printOptions.type !== 'task');
+            document.getElementById('print-date-inputs').classList.toggle('hidden', printOptions.type !== 'date');
+        }
+        window.confirmPrint = function() {
+            printConfig = { ...printOptions };
+            window.closePrintModal();
+            renderAll(); // Rerender with filtered data
+            
+            setTimeout(() => {
+                window.print();
+                printConfig = null; // Reset
+                renderAll();
+            }, 500);
+        }
+
+        // --- CSV Import/Export ---
+        window.handleExportCSV = function() {
+            const headers = ['id', 'title', 'description', 'assignee', 'status', 'priority', 'startDate', 'dueDate', 'progress'];
+            const csvRows = [headers.join(',')];
+            
+            tasks.forEach(task => {
+                const values = headers.map(header => {
+                    let val = task[header] !== undefined && task[header] !== null ? task[header].toString() : '';
+                    val = val.replace(/"/g, '""');
+                    return `"${val}"`;
+                });
+                csvRows.push(values.join(','));
+            });
+
+            const csvContent = "\uFEFF" + csvRows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }); 
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `promanage_data_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        window.handleImportCSV = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const text = e.target.result;
+                    const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
+                    if (rows.length <= 1) return; 
+
+                    const headers = rows[0].split(',').map(h => h.replace(/"/g, '').trim());
+                    const newTasks = [];
+
+                    for (let i = 1; i < rows.length; i++) {
+                        const values = rows[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || rows[i].split(',');
+                        let taskObj = {};
+                        headers.forEach((header, index) => {
+                            let val = values[index] ? values[index].replace(/^"|"$/g, '').replace(/""/g, '"').trim() : '';
+                            if (header === 'progress') val = parseInt(val, 10) || 0;
+                            taskObj[header] = val;
+                        });
+                        if(taskObj.id && taskObj.title) newTasks.push(taskObj);
+                    }
+
+                    if (newTasks.length > 0) {
+                        if(window.confirm(`พบข้อมูลงานทั้งหมด ${newTasks.length} รายการ คุณต้องการแทนที่ข้อมูลเดิมทั้งหมดใช่หรือไม่?`)) {
+                            tasks = newTasks;
+                            saveAndRender();
+                            alert('อิมพอร์ตข้อมูลเรียบร้อยแล้ว');
+                        }
+                    }
+                } catch (error) {
+                    alert('เกิดข้อผิดพลาดในการอ่านไฟล์ CSV โปรดตรวจสอบรูปแบบไฟล์');
+                    console.error(error);
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = null; 
+        }
+
+        // Start App
+        init();
+
+    </script>
+</body>
+</html>
