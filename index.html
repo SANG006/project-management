@@ -93,6 +93,7 @@
             </div>
             <form id="task-form" class="p-6 space-y-4" onsubmit="window.submitTaskForm(event)">
                 <input type="hidden" name="id" id="task-id">
+                <input type="hidden" name="parentId" id="task-parent-id">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">ชื่องาน *</label>
                     <input required name="title" id="task-title" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="เช่น ออกแบบโลโก้">
@@ -298,6 +299,38 @@
             return tasks;
         }
 
+        // --- Tree Structure Helper ---
+        function getTreeTasks(tasksArray) {
+            const result = [];
+            const addedIds = new Set();
+
+            // 1. ดึงหัวข้อหลักมาก่อน (ไม่มี parentId)
+            tasksArray.forEach(t => {
+                if (!t.parentId && !addedIds.has(t.id)) {
+                    result.push({ ...t, level: 0 });
+                    addedIds.add(t.id);
+                    
+                    // 2. หางานย่อยของหัวข้อนี้
+                    tasksArray.forEach(child => {
+                        if (child.parentId === t.id && !addedIds.has(child.id)) {
+                            result.push({ ...child, level: 1 });
+                            addedIds.add(child.id);
+                        }
+                    });
+                }
+            });
+
+            // 3. ป้องกันข้อมูลหลุด (กรณีมีงานย่อยแต่หัวข้อหลักถูก filter ออกไป)
+            tasksArray.forEach(t => {
+                if (!addedIds.has(t.id)) {
+                    result.push({ ...t, level: 0 }); 
+                    addedIds.add(t.id);
+                }
+            });
+
+            return result;
+        }
+
         function getStats(tList) {
             const total = tList.length;
             const done = tList.filter(t => t.status === 'Done').length;
@@ -414,6 +447,7 @@
         }
 
         function getListHTML(vTasks) {
+            const treeTasks = getTreeTasks(vTasks);
             return `
             <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                 <table class="w-full text-left border-collapse">
@@ -428,13 +462,19 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200 text-sm">
-                        ${vTasks.length === 0 ? `<tr><td colspan="6" class="text-center p-8 text-gray-500">ไม่มีข้อมูลงาน</td></tr>` : 
-                        vTasks.map((task, index) => `
-                            <tr class="hover:bg-gray-50 transition-colors">
+                        ${treeTasks.length === 0 ? `<tr><td colspan="6" class="text-center p-8 text-gray-500">ไม่มีข้อมูลงาน</td></tr>` : 
+                        treeTasks.map((task, index) => {
+                            const indent = task.level > 0 ? 'pl-8 text-gray-600' : 'font-medium text-gray-800';
+                            const prefix = task.level > 0 ? '↳ ' : '';
+                            return `
+                            <tr class="hover:bg-gray-50 transition-colors ${task.level > 0 ? 'bg-gray-50/30' : ''}">
                                 <td class="p-4 text-center text-gray-500">${printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}</td>
-                                <td class="p-4">
-                                    <p class="font-medium text-gray-800">${task.title}</p>
-                                    <p class="text-xs text-gray-500 truncate max-w-xs">${task.description || ''}</p>
+                                <td class="p-4 ${indent}">
+                                    <p class="flex items-center gap-2 group">
+                                        ${prefix}${task.title}
+                                        ${task.level === 0 ? `<button onclick="window.openTaskModal(null, true, '${task.id}')" class="text-green-500 hover:text-green-700 opacity-0 group-hover:opacity-100 transition-opacity" title="เพิ่มงานย่อย"><i data-lucide="plus-circle" class="w-4 h-4"></i></button>` : ''}
+                                    </p>
+                                    <p class="text-xs text-gray-500 truncate max-w-xs ${task.level > 0 ? 'ml-4' : ''}">${task.description || ''}</p>
                                 </td>
                                 <td class="p-4">
                                     <div class="flex items-center gap-2">
@@ -443,7 +483,9 @@
                                     </div>
                                 </td>
                                 <td class="p-4">
-                                    <span class="text-xs px-2.5 py-1.5 rounded-full font-medium ${getStatusColor(task.status)}">${task.status}</span>
+                                    <select onchange="window.handleStatusChange('${task.id}', this.value)" class="text-xs px-2.5 py-1.5 rounded-full font-medium outline-none border-none cursor-pointer ${getStatusColor(task.status)}" style="appearance: none; -webkit-appearance: none;">
+                                        ${STATUSES.map(s => `<option value="${s}" ${task.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+                                    </select>
                                 </td>
                                 <td class="p-4 flex items-center gap-2">
                                     <div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs">${task.assignee.charAt(0)}</div>
@@ -454,16 +496,17 @@
                                     <button onclick="window.deleteTask('${task.id}')" class="text-red-500 hover:text-red-700 font-medium">ลบ</button>
                                 </td>
                             </tr>
-                        `).join('')}
+                        `}).join('')}
                     </tbody>
                 </table>
             </div>`;
         }
 
         function getKanbanHTML(vTasks) {
+            const treeTasks = getTreeTasks(vTasks);
             let html = `<div class="flex h-full gap-6 overflow-x-auto pb-4">`;
             STATUSES.forEach(status => {
-                const sTasks = vTasks.filter(t => t.status === status);
+                const sTasks = treeTasks.filter(t => t.status === status);
                 const dotColor = status === 'Done' ? 'bg-green-500' : status === 'In Progress' ? 'bg-blue-500' : status === 'Review' ? 'bg-purple-500' : 'bg-gray-400';
                 
                 html += `
@@ -479,7 +522,7 @@
                                     <span class="text-xs px-2 py-1 rounded-md border font-medium ${getPriorityColor(task.priority)}">${task.priority}</span>
                                     <button onclick="window.openTaskModal('${task.id}')" class="print-hide text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100"><i data-lucide="edit" class="w-4 h-4"></i></button>
                                 </div>
-                                <h4 class="font-semibold text-gray-800 mb-1">${task.title}</h4>
+                                <h4 class="font-semibold text-gray-800 mb-1">${task.level > 0 ? '↳ ' : ''}${task.title}</h4>
                                 <p class="text-sm text-gray-500 mb-3 line-clamp-2">${task.description || ''}</p>
                                 <div class="mb-3">
                                     <div class="flex justify-between text-xs mb-1 text-gray-500"><span>Progress</span><span class="font-medium text-gray-700">${task.progress || 0}%</span></div>
@@ -501,6 +544,7 @@
 
         function getGanttHTML(vTasks) {
             const gData = getGanttData(vTasks);
+            const treeTasks = getTreeTasks(vTasks);
             const timelineLabel = gData.months.length > 0 ? `${gData.months[0].label} ${gData.months.length > 1 ? '- ' + gData.months[gData.months.length-1].label : ''}` : '';
 
             let html = `
@@ -522,19 +566,29 @@
                             <div class="w-16 px-2 text-center">%</div>
                         </div>
                         <div class="flex-1 overflow-y-auto">
-                            ${vTasks.map((task, index) => `
-                                <div onclick="window.openTaskModal('${task.id}')" class="flex border-b border-gray-200 text-sm hover:bg-indigo-50 cursor-pointer h-8 items-center group transition-colors">
-                                    <div class="w-10 px-2 text-center text-gray-500 border-r border-gray-200">${printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}</div>
-                                    <div class="flex-1 px-2 font-medium text-gray-800 border-r border-gray-200 truncate flex justify-between items-center">
-                                        ${task.title}
-                                        <i data-lucide="edit" class="w-3 h-3 print-hide opacity-0 group-hover:opacity-100 text-indigo-500"></i>
+                            ${treeTasks.map((task, index) => {
+                                const indentClass = task.level > 0 ? 'pl-6 bg-gray-50/50 border-l-2 border-l-indigo-300' : '';
+                                const titlePrefix = task.level > 0 ? '↳ ' : '';
+                                
+                                return `
+                                <div draggable="true" ondragstart="window.handleGanttDragStart(event, '${task.id}')" ondragend="window.handleGanttDragEnd(event)" ondragover="window.handleGanttDragOver(event)" ondragenter="window.handleGanttDragEnter(event)" ondragleave="window.handleGanttDragLeave(event)" ondrop="window.handleGanttDrop(event, '${task.id}')" class="flex border-b border-gray-200 text-sm hover:bg-indigo-50 cursor-move h-8 items-center group transition-colors">
+                                    <div class="w-10 px-2 text-center text-gray-500 border-r border-gray-200 flex items-center justify-center gap-1" onclick="window.openTaskModal('${task.id}')">
+                                        <i data-lucide="grip-vertical" class="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100"></i>
+                                        ${printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}
                                     </div>
-                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs">${task.startDate ? task.startDate.substring(5) : '-'}</div>
-                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs">${task.dueDate ? task.dueDate.substring(5) : '-'}</div>
-                                    <div class="w-16 px-2 text-center text-gray-600 text-xs font-medium">${task.progress || 0}%</div>
+                                    <div class="flex-1 px-2 font-medium text-gray-800 border-r border-gray-200 truncate flex justify-between items-center ${indentClass}">
+                                        <span class="truncate cursor-pointer" onclick="window.openTaskModal('${task.id}')">${titlePrefix}${task.title}</span>
+                                        <div class="flex gap-2">
+                                            ${task.level === 0 ? `<i data-lucide="plus-circle" onclick="window.openTaskModal(null, true, '${task.id}')" class="w-3.5 h-3.5 print-hide opacity-0 group-hover:opacity-100 text-green-500 hover:text-green-700 cursor-pointer" title="เพิ่มงานย่อย"></i>` : ''}
+                                            <i data-lucide="edit" onclick="window.openTaskModal('${task.id}')" class="w-3.5 h-3.5 print-hide opacity-0 group-hover:opacity-100 text-indigo-500 hover:text-indigo-700 cursor-pointer"></i>
+                                        </div>
+                                    </div>
+                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs cursor-pointer" onclick="window.openTaskModal('${task.id}')">${task.startDate ? task.startDate.substring(5) : '-'}</div>
+                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs cursor-pointer" onclick="window.openTaskModal('${task.id}')">${task.dueDate ? task.dueDate.substring(5) : '-'}</div>
+                                    <div class="w-16 px-2 text-center text-gray-600 text-xs font-medium cursor-pointer" onclick="window.openTaskModal('${task.id}')">${task.progress || 0}%</div>
                                 </div>
-                            `).join('')}
-                            ${Array.from({length: Math.max(0, 10 - vTasks.length)}).map(() => `
+                            `}).join('')}
+                            ${Array.from({length: Math.max(0, 10 - treeTasks.length)}).map(() => `
                                 <div class="flex border-b border-gray-100 h-8">
                                     <div class="w-10 border-r border-gray-100"></div><div class="flex-1 border-r border-gray-100"></div><div class="w-20 border-r border-gray-100"></div><div class="w-20 border-r border-gray-100"></div><div class="w-16"></div>
                                 </div>
@@ -545,10 +599,10 @@
                     <!-- Right Pane: Gantt -->
                     <div class="flex-1 flex flex-col overflow-auto bg-white relative">
                         <div class="bg-gray-100 border-b border-gray-300 sticky top-0 z-10 shadow-sm h-12 flex flex-col">
-                            <div class="flex border-b border-gray-300 bg-gray-200/50 min-w-max flex-1">
+                            <div class="flex border-b border-gray-300 bg-gray-200/50 min-w-max">
                                 ${gData.months.map(m => `<div class="flex items-center justify-center text-xs font-bold text-gray-700 border-r border-gray-300 flex-shrink-0" style="width: ${m.colSpan * 32}px">${m.label}</div>`).join('')}
                             </div>
-                            <div class="flex min-w-max flex-1">
+                            <div class="flex min-w-max">
                                 ${gData.days.map(day => `<div class="w-8 flex-shrink-0 flex items-center justify-center text-[10px] text-gray-500 border-r border-gray-200 ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-200/50 text-red-400 font-medium' : ''}">${day.getDate()}</div>`).join('')}
                             </div>
                         </div>
@@ -556,8 +610,8 @@
                             <div class="absolute inset-0 flex pointer-events-none min-w-max">
                                 ${gData.days.map(day => `<div class="w-8 flex-shrink-0 border-r border-gray-100 h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/80' : ''}"></div>`).join('')}
                             </div>
-                            ${vTasks.map(task => {
-                                if (!task.startDate || !task.dueDate) return `<div class="h-8 border-b border-gray-200"></div>`;
+                            ${treeTasks.map(task => {
+                                if (!task.startDate || !task.dueDate) return `<div class="h-8 border-b border-gray-200 ${task.level > 0 ? 'bg-gray-50/20' : ''}"></div>`;
                                 const sDate = new Date(task.startDate);
                                 const eDate = new Date(task.dueDate);
                                 const startOffsetDays = Math.floor((sDate - gData.minDate) / (1000 * 60 * 60 * 24));
@@ -571,11 +625,11 @@
                                 const labelLeft = Math.max(barWidth, leftPos + barWidth) + 8;
 
                                 return `
-                                <div class="h-8 border-b border-gray-200 relative flex items-center gantt-bar-group">
-                                    <div onclick="window.openTaskModal('${task.id}')" class="absolute h-5 bg-blue-200 border border-blue-400 rounded-sm shadow-sm overflow-hidden flex items-center cursor-pointer hover:border-blue-600 transition-colors" style="left: ${finalLeft}px; width: ${finalWidth}px">
-                                        <div class="h-full bg-blue-500 opacity-80 transition-all" style="width: ${task.progress || 0}%"></div>
+                                <div class="h-8 border-b border-gray-200 relative flex items-center gantt-bar-group ${task.level > 0 ? 'bg-gray-50/20' : ''}">
+                                    <div onclick="window.openTaskModal('${task.id}')" class="absolute h-5 ${task.level > 0 ? 'bg-green-200 border-green-400 hover:border-green-600' : 'bg-blue-200 border-blue-400 hover:border-blue-600'} border rounded-sm shadow-sm overflow-hidden flex items-center cursor-pointer transition-colors" style="left: ${finalLeft}px; width: ${finalWidth}px">
+                                        <div class="h-full ${task.level > 0 ? 'bg-green-500' : 'bg-blue-500'} opacity-80 transition-all" style="width: ${task.progress || 0}%"></div>
                                         <div class="gantt-tooltip print-hide hidden absolute z-20 left-1/2 -translate-x-1/2 top-6 bg-gray-800 text-white text-xs p-1.5 rounded whitespace-nowrap shadow-lg">
-                                            <span class="font-semibold">${task.title}</span><br/>Progress: ${task.progress || 0}%
+                                            <span class="font-semibold">${task.level > 0 ? '↳ ' : ''}${task.title}</span><br/>Progress: ${task.progress || 0}%
                                         </div>
                                     </div>
                                     <div class="absolute text-[10px] text-gray-600 whitespace-nowrap" style="left: ${labelLeft}px">${task.assignee}</div>
@@ -609,17 +663,33 @@
         }
 
         // --- Form / Modals ---
-        window.openTaskModal = function(taskId = null) {
+        window.openTaskModal = function(taskId = null, isSubtask = false, parentId = null) {
             const modal = document.getElementById('task-modal');
             const titleEl = document.getElementById('task-modal-title');
             const btnEl = document.getElementById('task-submit-btn');
             const form = document.getElementById('task-form');
 
             form.reset();
-            if (taskId) {
+            
+            if (isSubtask && parentId) {
+                // โหมดสร้างงานย่อย
+                document.getElementById('task-id').value = '';
+                document.getElementById('task-parent-id').value = parentId;
+                
+                const today = new Date().toISOString().split('T')[0];
+                const threeDaysLater = new Date(Date.now() + 86400000*3).toISOString().split('T')[0];
+                document.getElementById('task-start').value = today;
+                document.getElementById('task-due').value = threeDaysLater;
+                
+                titleEl.innerText = 'สร้างงานย่อย (Sub-task)';
+                btnEl.innerText = 'สร้างงานย่อย';
+                
+            } else if (taskId) {
+                // โหมดแก้ไข
                 const task = tasks.find(t => t.id === taskId);
                 if(task) {
                     document.getElementById('task-id').value = task.id;
+                    document.getElementById('task-parent-id').value = task.parentId || '';
                     document.getElementById('task-title').value = task.title;
                     document.getElementById('task-desc').value = task.description || '';
                     document.getElementById('task-assignee').value = task.assignee;
@@ -631,7 +701,9 @@
                     btnEl.innerText = 'บันทึกการแก้ไข';
                 }
             } else {
+                // โหมดสร้างงานหลักใหม่
                 document.getElementById('task-id').value = '';
+                document.getElementById('task-parent-id').value = '';
                 const today = new Date().toISOString().split('T')[0];
                 const threeDaysLater = new Date(Date.now() + 86400000*3).toISOString().split('T')[0];
                 document.getElementById('task-start').value = today;
@@ -650,6 +722,7 @@
             event.preventDefault();
             const formData = new FormData(event.target);
             const id = formData.get('id');
+            const parentId = formData.get('parentId') || null;
             const progress = parseInt(formData.get('progress'), 10) || 0;
             
             const taskData = {
@@ -659,7 +732,8 @@
                 priority: formData.get('priority'),
                 startDate: formData.get('startDate'),
                 dueDate: formData.get('dueDate'),
-                progress: progress
+                progress: progress,
+                parentId: parentId
             };
 
             if (id) { // Update
@@ -682,8 +756,9 @@
         }
 
         window.deleteTask = function(taskId) {
-            if(confirm('คุณต้องการลบงานนี้ใช่หรือไม่?')) {
-                tasks = tasks.filter(t => t.id !== taskId);
+            if(confirm('คุณต้องการลบงานนี้ใช่หรือไม่? (หากเป็นหัวข้อหลัก งานย่อยทั้งหมดจะถูกลบด้วย)')) {
+                // ลบงานเป้าหมาย และลบงานที่มี parentId ตรงกับงานนี้ด้วย
+                tasks = tasks.filter(t => t.id !== taskId && t.parentId !== taskId);
                 saveAndRender();
             }
         }
@@ -705,17 +780,58 @@
         window.handleDrop = function(event, newStatus) {
             event.preventDefault();
             if (draggedTaskId) {
-                const taskIndex = tasks.findIndex(t => t.id === draggedTaskId);
-                if(taskIndex > -1) {
-                    let newProgress = tasks[taskIndex].progress;
-                    if (newStatus === 'Done') newProgress = 100;
-                    else if (newStatus === 'To Do' && newProgress === 100) newProgress = 0;
-                    
-                    tasks[taskIndex].status = newStatus;
-                    tasks[taskIndex].progress = newProgress;
+                window.handleStatusChange(draggedTaskId, newStatus);
+                draggedTaskId = null;
+            }
+        }
+
+        // --- Gantt Drag & Drop Reordering ---
+        window.handleGanttDragStart = function(event, id) {
+            draggedTaskId = id;
+            event.dataTransfer.effectAllowed = 'move';
+            setTimeout(() => { event.target.style.opacity = '0.4'; }, 0);
+        }
+        window.handleGanttDragEnd = function(event) {
+            event.target.style.opacity = '1';
+            draggedTaskId = null;
+        }
+        window.handleGanttDragOver = function(event) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+        }
+        window.handleGanttDragEnter = function(event) {
+            event.preventDefault();
+            event.currentTarget.classList.add('bg-indigo-100');
+        }
+        window.handleGanttDragLeave = function(event) {
+            event.currentTarget.classList.remove('bg-indigo-100');
+        }
+        window.handleGanttDrop = function(event, targetId) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('bg-indigo-100');
+            if (draggedTaskId && draggedTaskId !== targetId) {
+                const fromIndex = tasks.findIndex(t => t.id === draggedTaskId);
+                const toIndex = tasks.findIndex(t => t.id === targetId);
+                if (fromIndex > -1 && toIndex > -1) {
+                    const [movedTask] = tasks.splice(fromIndex, 1);
+                    tasks.splice(toIndex, 0, movedTask);
                     saveAndRender();
                 }
-                draggedTaskId = null;
+            }
+            draggedTaskId = null;
+        }
+
+        // --- Status Change Handler ---
+        window.handleStatusChange = function(taskId, newStatus) {
+            const taskIndex = tasks.findIndex(t => t.id === taskId);
+            if(taskIndex > -1) {
+                let newProgress = tasks[taskIndex].progress;
+                if (newStatus === 'Done') newProgress = 100;
+                else if (newStatus === 'To Do' && newProgress === 100) newProgress = 0;
+                
+                tasks[taskIndex].status = newStatus;
+                tasks[taskIndex].progress = newProgress;
+                saveAndRender();
             }
         }
 
@@ -746,7 +862,7 @@
 
         // --- CSV Import/Export ---
         window.handleExportCSV = function() {
-            const headers = ['id', 'title', 'description', 'assignee', 'status', 'priority', 'startDate', 'dueDate', 'progress'];
+            const headers = ['id', 'parentId', 'title', 'description', 'assignee', 'status', 'priority', 'startDate', 'dueDate', 'progress'];
             const csvRows = [headers.join(',')];
             
             tasks.forEach(task => {
