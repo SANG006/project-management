@@ -20,16 +20,28 @@
 
         /* Print Media Queries */
         @media print {
+            @page { size: landscape; margin: 10mm; } /* บังคับหน้ากระดาษแนวนอนตั้งต้น */
             aside, header, .print-hide { display: none !important; }
             main { padding: 0 !important; overflow: visible !important; height: auto !important; }
             .gantt-container { border: none !important; box-shadow: none !important; }
             * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
             body { background-color: white !important; }
             #app-container { height: auto !important; overflow: visible !important; display: block !important;}
+            /* ป้องกันกราฟที่ล้นเวลาพิมพ์ทะลุไปหน้าอื่น */
+            .gantt-right-pane { overflow-x: hidden !important; overflow-y: visible !important; }
         }
 
         /* Tooltip Hover Area */
         .gantt-bar-group:hover .gantt-tooltip { display: block; }
+
+        /* CSS Variables for Resizable Columns */
+        :root {
+            --col-id: 48px;
+            --col-name: 250px;
+            --col-start: 80px;
+            --col-due: 80px;
+            --col-progress: 64px;
+        }
     </style>
 </head>
 <body class="bg-gray-50 font-sans text-gray-800 h-screen overflow-hidden">
@@ -547,6 +559,14 @@
             const treeTasks = getTreeTasks(vTasks);
             const timelineLabel = gData.months.length > 0 ? `${gData.months[0].label} ${gData.months.length > 1 ? '- ' + gData.months[gData.months.length-1].label : ''}` : '';
 
+            // --- คำนวณความกว้างสำหรับการพิมพ์ให้พอดีหน้า (Fit to Page) ---
+            const isPrint = printConfig !== null;
+            const totalDays = Math.max(1, gData.days.length);
+            const usePercent = isPrint; // ถ้าปริ้นให้ใช้เปอร์เซ็นต์
+            const dayW = usePercent ? (100 / totalDays) : 32;
+            const u = usePercent ? '%' : 'px';
+            const minMaxCls = usePercent ? 'w-full' : 'min-w-max';
+
             let html = `
             <div class="flex flex-col h-full bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden gantt-container">
                 <div class="print-hide bg-gray-100 border-b border-gray-300 px-4 py-2 flex items-center gap-4 text-sm font-medium text-gray-700">
@@ -557,13 +577,28 @@
                 <div class="flex flex-1 overflow-hidden">
                     
                     <!-- Left Pane -->
-                    <div class="w-[40%] min-w-[350px] border-r border-gray-300 flex flex-col overflow-x-auto bg-white">
-                        <div class="flex bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 sticky top-0 z-10 shadow-sm h-12 items-center">
-                            <div class="w-10 px-2 border-r border-gray-300 text-center">ID</div>
-                            <div class="flex-1 px-2 border-r border-gray-300 min-w-[150px]">Task Name</div>
-                            <div class="w-20 px-2 border-r border-gray-300 text-center">Start</div>
-                            <div class="w-20 px-2 border-r border-gray-300 text-center">Finish</div>
-                            <div class="w-16 px-2 text-center">%</div>
+                    <div class="w-[40%] min-w-[350px] print:min-w-[200px] border-r border-gray-300 flex flex-col overflow-x-auto bg-white">
+                        <div class="flex bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 sticky top-0 z-10 shadow-sm h-12 items-center w-max min-w-full">
+                            <div class="relative shrink-0 px-2 border-r border-gray-300 flex items-center justify-center h-full" style="width: var(--col-id);">
+                                ID
+                                <div class="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-indigo-300 z-20" onmousedown="window.initResize(event, 'id')"></div>
+                            </div>
+                            <div class="relative shrink-0 px-2 border-r border-gray-300 flex items-center h-full" style="width: var(--col-name);">
+                                Task Name
+                                <div class="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-indigo-300 z-20" onmousedown="window.initResize(event, 'name')"></div>
+                            </div>
+                            <div class="relative shrink-0 px-2 border-r border-gray-300 flex items-center justify-center h-full" style="width: var(--col-start);">
+                                Start
+                                <div class="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-indigo-300 z-20" onmousedown="window.initResize(event, 'start')"></div>
+                            </div>
+                            <div class="relative shrink-0 px-2 border-r border-gray-300 flex items-center justify-center h-full" style="width: var(--col-due);">
+                                Finish
+                                <div class="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-indigo-300 z-20" onmousedown="window.initResize(event, 'due')"></div>
+                            </div>
+                            <div class="relative shrink-0 px-2 flex items-center justify-center h-full" style="width: var(--col-progress);">
+                                %
+                                <div class="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-indigo-300 z-20" onmousedown="window.initResize(event, 'progress')"></div>
+                            </div>
                         </div>
                         <div class="flex-1 overflow-y-auto">
                             ${treeTasks.map((task, index) => {
@@ -571,44 +606,48 @@
                                 const titlePrefix = task.level > 0 ? '↳ ' : '';
                                 
                                 return `
-                                <div draggable="true" ondragstart="window.handleGanttDragStart(event, '${task.id}')" ondragend="window.handleGanttDragEnd(event)" ondragover="window.handleGanttDragOver(event)" ondragenter="window.handleGanttDragEnter(event)" ondragleave="window.handleGanttDragLeave(event)" ondrop="window.handleGanttDrop(event, '${task.id}')" class="flex border-b border-gray-200 text-sm hover:bg-indigo-50 cursor-move h-8 items-center group transition-colors">
-                                    <div class="w-10 px-2 text-center text-gray-500 border-r border-gray-200 flex items-center justify-center gap-1" onclick="window.openTaskModal('${task.id}')">
-                                        <i data-lucide="grip-vertical" class="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100"></i>
-                                        ${printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}
+                                <div draggable="true" ondragstart="window.handleGanttDragStart(event, '${task.id}')" ondragend="window.handleGanttDragEnd(event)" ondragover="window.handleGanttDragOver(event)" ondragenter="window.handleGanttDragEnter(event)" ondragleave="window.handleGanttDragLeave(event)" ondrop="window.handleGanttDrop(event, '${task.id}')" class="flex border-b border-gray-200 text-sm hover:bg-indigo-50 cursor-move h-8 items-center group transition-colors w-max min-w-full">
+                                    <div class="shrink-0 px-2 text-center text-gray-500 border-r border-gray-200 flex items-center justify-center gap-1 h-full overflow-hidden" style="width: var(--col-id);" onclick="window.openTaskModal('${task.id}')">
+                                        <i data-lucide="grip-vertical" class="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0"></i>
+                                        <span class="truncate">${printConfig && printConfig.type === 'task' ? parseInt(printConfig.taskStart) + index : index + 1}</span>
                                     </div>
-                                    <div class="flex-1 px-2 font-medium text-gray-800 border-r border-gray-200 truncate flex justify-between items-center ${indentClass}">
-                                        <span class="truncate cursor-pointer" onclick="window.openTaskModal('${task.id}')">${titlePrefix}${task.title}</span>
-                                        <div class="flex gap-2">
+                                    <div class="shrink-0 px-2 font-medium text-gray-800 border-r border-gray-200 flex justify-between items-center ${indentClass} h-full" style="width: var(--col-name);">
+                                        <span class="truncate cursor-pointer flex-1" onclick="window.openTaskModal('${task.id}')">${titlePrefix}${task.title}</span>
+                                        <div class="flex gap-2 shrink-0 pl-1">
                                             ${task.level === 0 ? `<i data-lucide="plus-circle" onclick="window.openTaskModal(null, true, '${task.id}')" class="w-3.5 h-3.5 print-hide opacity-0 group-hover:opacity-100 text-green-500 hover:text-green-700 cursor-pointer" title="เพิ่มงานย่อย"></i>` : ''}
                                             <i data-lucide="edit" onclick="window.openTaskModal('${task.id}')" class="w-3.5 h-3.5 print-hide opacity-0 group-hover:opacity-100 text-indigo-500 hover:text-indigo-700 cursor-pointer"></i>
                                         </div>
                                     </div>
-                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs cursor-pointer" onclick="window.openTaskModal('${task.id}')">${task.startDate ? task.startDate.substring(5) : '-'}</div>
-                                    <div class="w-20 px-2 text-gray-600 border-r border-gray-200 text-xs cursor-pointer" onclick="window.openTaskModal('${task.id}')">${task.dueDate ? task.dueDate.substring(5) : '-'}</div>
-                                    <div class="w-16 px-2 text-center text-gray-600 text-xs font-medium cursor-pointer" onclick="window.openTaskModal('${task.id}')">${task.progress || 0}%</div>
+                                    <div class="shrink-0 px-2 text-gray-600 border-r border-gray-200 text-xs flex items-center justify-center h-full overflow-hidden cursor-pointer" style="width: var(--col-start);" onclick="window.openTaskModal('${task.id}')">${task.startDate ? task.startDate.substring(5) : '-'}</div>
+                                    <div class="shrink-0 px-2 text-gray-600 border-r border-gray-200 text-xs flex items-center justify-center h-full overflow-hidden cursor-pointer" style="width: var(--col-due);" onclick="window.openTaskModal('${task.id}')">${task.dueDate ? task.dueDate.substring(5) : '-'}</div>
+                                    <div class="shrink-0 px-2 text-center text-gray-600 text-xs font-medium flex items-center justify-center h-full overflow-hidden cursor-pointer" style="width: var(--col-progress);" onclick="window.openTaskModal('${task.id}')">${task.progress || 0}%</div>
                                 </div>
                             `}).join('')}
                             ${Array.from({length: Math.max(0, 10 - treeTasks.length)}).map(() => `
-                                <div class="flex border-b border-gray-100 h-8">
-                                    <div class="w-10 border-r border-gray-100"></div><div class="flex-1 border-r border-gray-100"></div><div class="w-20 border-r border-gray-100"></div><div class="w-20 border-r border-gray-100"></div><div class="w-16"></div>
+                                <div class="flex border-b border-gray-100 h-8 w-max min-w-full">
+                                    <div class="shrink-0 border-r border-gray-100 h-full" style="width: var(--col-id);"></div>
+                                    <div class="shrink-0 border-r border-gray-100 h-full" style="width: var(--col-name);"></div>
+                                    <div class="shrink-0 border-r border-gray-100 h-full" style="width: var(--col-start);"></div>
+                                    <div class="shrink-0 border-r border-gray-100 h-full" style="width: var(--col-due);"></div>
+                                    <div class="shrink-0 h-full" style="width: var(--col-progress);"></div>
                                 </div>
                             `).join('')}
                         </div>
                     </div>
 
                     <!-- Right Pane: Gantt -->
-                    <div class="flex-1 flex flex-col overflow-auto bg-white relative">
+                    <div class="flex-1 flex flex-col overflow-auto bg-white relative gantt-right-pane">
                         <div class="bg-gray-100 border-b border-gray-300 sticky top-0 z-10 shadow-sm h-12 flex flex-col">
-                            <div class="flex border-b border-gray-300 bg-gray-200/50 min-w-max">
-                                ${gData.months.map(m => `<div class="flex items-center justify-center text-xs font-bold text-gray-700 border-r border-gray-300 flex-shrink-0" style="width: ${m.colSpan * 32}px">${m.label}</div>`).join('')}
+                            <div class="flex border-b border-gray-300 bg-gray-200/50 ${minMaxCls}">
+                                ${gData.months.map(m => `<div class="flex items-center justify-center text-xs font-bold text-gray-700 border-r border-gray-300 flex-shrink-0" style="width: ${m.colSpan * dayW}${u}">${m.label}</div>`).join('')}
                             </div>
-                            <div class="flex min-w-max">
-                                ${gData.days.map(day => `<div class="w-8 flex-shrink-0 flex items-center justify-center text-[10px] text-gray-500 border-r border-gray-200 ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-200/50 text-red-400 font-medium' : ''}">${day.getDate()}</div>`).join('')}
+                            <div class="flex ${minMaxCls}">
+                                ${gData.days.map(day => `<div class="flex-shrink-0 flex items-center justify-center text-[10px] text-gray-500 border-r border-gray-200 ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-200/50 text-red-400 font-medium' : ''}" style="width: ${dayW}${u}">${day.getDate()}</div>`).join('')}
                             </div>
                         </div>
-                        <div class="flex-1 min-w-max relative">
-                            <div class="absolute inset-0 flex pointer-events-none min-w-max">
-                                ${gData.days.map(day => `<div class="w-8 flex-shrink-0 border-r border-gray-100 h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/80' : ''}"></div>`).join('')}
+                        <div class="flex-1 ${minMaxCls} relative">
+                            <div class="absolute inset-0 flex pointer-events-none ${minMaxCls}">
+                                ${gData.days.map(day => `<div class="flex-shrink-0 border-r border-gray-100 h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/80' : ''}" style="width: ${dayW}${u}"></div>`).join('')}
                             </div>
                             ${treeTasks.map(task => {
                                 if (!task.startDate || !task.dueDate) return `<div class="h-8 border-b border-gray-200 ${task.level > 0 ? 'bg-gray-50/20' : ''}"></div>`;
@@ -616,23 +655,35 @@
                                 const eDate = new Date(task.dueDate);
                                 const startOffsetDays = Math.floor((sDate - gData.minDate) / (1000 * 60 * 60 * 24));
                                 const durationDays = Math.floor((eDate - sDate) / (1000 * 60 * 60 * 24)) + 1;
-                                const leftPos = startOffsetDays * 32; 
-                                const barWidth = Math.max(durationDays * 32, 32); 
-                                if(leftPos + barWidth < 0) return `<div class="h-8 border-b border-gray-200"></div>`;
                                 
-                                const finalLeft = Math.max(0, leftPos);
-                                const finalWidth = leftPos < 0 ? barWidth + leftPos : barWidth;
-                                const labelLeft = Math.max(barWidth, leftPos + barWidth) + 8;
+                                let finalLeft, finalWidth, labelLeftCss;
+                                
+                                // จัดการขนาดตอน Print และจอปกติ
+                                if (usePercent) {
+                                    finalLeft = Math.max(0, startOffsetDays * dayW);
+                                    let rawWidth = durationDays * dayW;
+                                    if (startOffsetDays < 0) rawWidth += (startOffsetDays * dayW);
+                                    finalWidth = Math.max(0, rawWidth);
+                                    labelLeftCss = 'calc(' + (finalLeft + finalWidth) + '% + 8px)';
+                                } else {
+                                    const leftPos = startOffsetDays * 32; 
+                                    const barWidth = Math.max(durationDays * 32, 32); 
+                                    finalLeft = Math.max(0, leftPos);
+                                    finalWidth = leftPos < 0 ? barWidth + leftPos : barWidth;
+                                    labelLeftCss = (Math.max(barWidth, leftPos + barWidth) + 8) + 'px';
+                                }
+
+                                if(finalWidth <= 0) return `<div class="h-8 border-b border-gray-200 ${task.level > 0 ? 'bg-gray-50/20' : ''}"></div>`;
 
                                 return `
                                 <div class="h-8 border-b border-gray-200 relative flex items-center gantt-bar-group ${task.level > 0 ? 'bg-gray-50/20' : ''}">
-                                    <div onclick="window.openTaskModal('${task.id}')" class="absolute h-5 ${task.level > 0 ? 'bg-green-200 border-green-400 hover:border-green-600' : 'bg-blue-200 border-blue-400 hover:border-blue-600'} border rounded-sm shadow-sm overflow-hidden flex items-center cursor-pointer transition-colors" style="left: ${finalLeft}px; width: ${finalWidth}px">
+                                    <div onclick="window.openTaskModal('${task.id}')" class="absolute h-5 ${task.level > 0 ? 'bg-green-200 border-green-400 hover:border-green-600' : 'bg-blue-200 border-blue-400 hover:border-blue-600'} border rounded-sm shadow-sm overflow-hidden flex items-center cursor-pointer transition-colors" style="left: ${finalLeft}${u}; width: ${finalWidth}${u}">
                                         <div class="h-full ${task.level > 0 ? 'bg-green-500' : 'bg-blue-500'} opacity-80 transition-all" style="width: ${task.progress || 0}%"></div>
                                         <div class="gantt-tooltip print-hide hidden absolute z-20 left-1/2 -translate-x-1/2 top-6 bg-gray-800 text-white text-xs p-1.5 rounded whitespace-nowrap shadow-lg">
                                             <span class="font-semibold">${task.level > 0 ? '↳ ' : ''}${task.title}</span><br/>Progress: ${task.progress || 0}%
                                         </div>
                                     </div>
-                                    <div class="absolute text-[10px] text-gray-600 whitespace-nowrap" style="left: ${labelLeft}px">${task.assignee}</div>
+                                    <div class="absolute text-[10px] text-gray-600 whitespace-nowrap" style="left: ${labelLeftCss}">${task.assignee}</div>
                                 </div>`;
                             }).join('')}
                         </div>
@@ -783,6 +834,40 @@
                 window.handleStatusChange(draggedTaskId, newStatus);
                 draggedTaskId = null;
             }
+        }
+
+        // --- Column Resizing Logic ---
+        let resizingColName = null;
+        let startPageX = 0;
+        let currentColWidth = 0;
+
+        window.initResize = function(e, colName) {
+            e.preventDefault();
+            e.stopPropagation();
+            resizingColName = colName;
+            startPageX = e.pageX;
+            const root = document.documentElement;
+            let w = getComputedStyle(root).getPropertyValue(`--col-${colName}`).replace('px', '').trim();
+            currentColWidth = parseInt(w, 10) || 100;
+            
+            document.addEventListener('mousemove', window.doResize);
+            document.addEventListener('mouseup', window.stopResize);
+            document.body.classList.add('cursor-col-resize', 'select-none');
+        }
+
+        window.doResize = function(e) {
+            if (!resizingColName) return;
+            const dx = e.pageX - startPageX;
+            let newWidth = Math.max(30, currentColWidth + dx); // ความกว้างขั้นต่ำ 30px
+            document.documentElement.style.setProperty(`--col-${resizingColName}`, `${newWidth}px`);
+        }
+
+        window.stopResize = function(e) {
+            if (!resizingColName) return;
+            document.removeEventListener('mousemove', window.doResize);
+            document.removeEventListener('mouseup', window.stopResize);
+            document.body.classList.remove('cursor-col-resize', 'select-none');
+            resizingColName = null;
         }
 
         // --- Gantt Drag & Drop Reordering ---
